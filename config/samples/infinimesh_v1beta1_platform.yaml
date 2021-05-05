@@ -1,0 +1,64 @@
+apiVersion: infinimesh.infinimesh.io/v1beta1
+kind: Platform
+metadata:
+  labels:
+    controller-tools.k8s.io: "1.0"
+  name: my-infinimesh
+spec:
+  kafka:
+    bootstrapServers: "my-kafka-instance.kafka.svc.cluster.local:9092"
+  mqtt:
+    secretName: "api-infinimesh-io-tls"
+  apiserver:
+    restful:
+      host: "api.infinimesh.io"
+      tls:
+        - hosts:
+          - "api.infinimesh.io"
+          secretName: "api-infinimesh-io-tls"
+    grpc:
+      host: "grpc.api.infinimesh.io"
+      tls:
+        - hosts:
+          - "grpc.api.infinimesh.io"
+          secretName: "api-infinimesh-io-tls"
+  infinimeshDefaultStorage:
+    storage:
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: "20Gi"
+      storageClassName: "infinimesh-standard"
+  dgraphAlpha:
+    storage:
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: "20Gi"
+      storageClassName: "infinimesh-standard"
+  dgraphZero:
+    storage:
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: "10Gi"
+      storageClassName: "infinimesh-standard"
+  controller:
+    device_details: false
+    apiserver: false
+    apiserver_rest: true
+    device_registry: false
+    dgraph: false
+    frontend: true
+    hard_delete_namespace_cronjob: false
+    timeseries: false
+    mqtt_bridge: false
+    nodeserver: false
+    reset_root_account_pwd: false
+    telemetry-router: false
+    twin: false
+  host:
+    registry: quay.io
