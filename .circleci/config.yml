@@ -43,13 +43,13 @@ jobs:
       - deploy:
           name: Push application Docker image
           command: |
-            if [ "$ {CIRCLE_BRANCH}" == "master" ]; then
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
                 TAG=1.0.$CIRCLE_BUILD_NUM
                 echo $TAG
             	docker login -u iamapikey -p $IAMAPIKEY de.icr.io
                 echo $IAMAPIKEY
-                docker tag operator-${TAG} iamapikey/infinihealth
-                docker push iamapikey/infinihealth
+                docker tag operator:${TAG} de.icr.io/infinihealth/operator:${TAG}
+                docker push de.icr.io/infinihealth/operator:${TAG}
             fi 
               
 workflows:
