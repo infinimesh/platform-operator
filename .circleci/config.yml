@@ -33,14 +33,29 @@ jobs:
       - checkout
       - run: go mod verify
   quick_build: 
-    docker:
     steps:
-      - setup_remote_docker
       - checkout
+      - setup_remote_docker
       - run:
           name: Build Operator
           command: |
-            docker build -t infinimesh/enterprise_operator:latest -f Dockerfile .
+            if [ " ${CIRCLE_BRANCH}" == "master" ]; then 
+                TAG=0.1.$CIRCLE_BUILD_NUM
+                docker build -t infinimesh/enterprise_operator:${TAG} -f Dockerfile .
+                docker tag app "${ECR_ENDPOINT}/app:${CIRCLE_SHA1}"
+            elif [ " ${CIRCLE_BRANCH}" == "infinidev" ]; then
+                TAG=0.1.$CIRCLE_BUILD_NUM
+                docker build -t infinimesh/enterprise_operator:infinidev-${TAG} -f Dockerfile .
+                docker tag app "${ECR_ENDPOINT}/app:${CIRCLE_SHA1}"
+               fi
+            fi
+      - deploy:
+          name: Push application Docker image
+          command: |
+            if [ "$ {CIRCLE_BRANCH}" == "infinidev" ]; then
+            	echo 1
+            fi 
+              
 workflows:
     version: 2
     all:
