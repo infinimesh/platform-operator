@@ -32,10 +32,10 @@ jobs:
       - setup_remote_docker
       - checkout
       - run: go mod verify
-  quick_build: 
+  quick_build:
+    machine: true 
     steps:
       - checkout
-      - setup_remote_docker
       - run:
           name: Build Operator
           command: |
