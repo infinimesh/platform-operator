@@ -39,16 +39,16 @@ jobs:
       - run:
           name: Build Operator
           command: |
-                docker build -t infinimesh/enterprise_operator:latest -f Dockerfile .
+                TAG=1.0.$CIRCLE_BUILD_NUM
+                docker build -t de.icr.io/infinihealth/operator:$TAG -f Dockerfile .
       - deploy:
           name: Push application Docker image
           command: |
             if [ "${CIRCLE_BRANCH}" == "master" ]; then
                 TAG=1.0.$CIRCLE_BUILD_NUM
-                echo $TAG
             	docker login -u iamapikey -p $IAMAPIKEY de.icr.io
                 echo $IAMAPIKEY
-                docker tag operator:${TAG} de.icr.io/infinihealth/operator:${TAG}
+#                docker tag operator:${TAG} de.icr.io/infinihealth/operator:${TAG}
                 docker push de.icr.io/infinihealth/operator:${TAG}
             fi 
               
