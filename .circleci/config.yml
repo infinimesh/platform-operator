@@ -33,6 +33,7 @@ jobs:
       - checkout
       - run: go mod verify
   quick_build: 
+    docker:
     steps:
       - setup_remote_docker
       - checkout
