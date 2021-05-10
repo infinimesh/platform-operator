@@ -2,7 +2,7 @@
 version: 2.1
 jobs:
   build:
-    working_directory: ~/repo
+    working_directory: /go/src/github.com/infinimesh/enterprise_operator
     docker:
       - image: circleci/golang:1.15.8
     steps:
@@ -24,9 +24,21 @@ jobs:
             gotestsum --junitfile /tmp/test-reports/unit-tests.xml
       - store_test_results:
           path: /tmp/test-reports
-#  workflows:
-#    version: 2
-#    build_and_test:
-#      jobs:
+  ent_op_img:
+    docker:
+      - image: circleci/golang:1.15.8
+    working_directory: /go/src/github.com/infinimesh/enterprise_operator
+    steps:
+      - setup_remote_docker
+      - checkout
+      - run: go mod verify
+      - run:
+          name: Build Operator
+          command: |
+            docker build -t infinimesh/enterprise_operator:latest -f Dockerfile .
+workflows:
+    version: 2
+    all:
+      jobs:
 #        - build
-#        - test
+        - ent_op_img  
