@@ -32,6 +32,10 @@ jobs:
       - setup_remote_docker
       - checkout
       - run: go mod verify
+  quick_build: 
+    steps:
+      - setup_remote_docker
+      - checkout
       - run:
           name: Build Operator
           command: |
@@ -41,4 +45,5 @@ workflows:
     all:
       jobs:
 #        - build
-        - ent_op_img  
+#        - ent_op_img
+         - quick_build  
