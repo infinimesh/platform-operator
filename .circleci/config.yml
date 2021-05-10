@@ -47,7 +47,6 @@ jobs:
             if [ "${CIRCLE_BRANCH}" == "master" ]; then
                 TAG=1.0.$CIRCLE_BUILD_NUM
                 docker login -u iamapikey -p $IAMAPIKEY de.icr.io
-#                docker tag operator:${TAG} de.icr.io/infinihealth/operator:${TAG}
                 docker push de.icr.io/infinihealth/operator:$TAG
             fi 
               
