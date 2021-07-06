@@ -19,20 +19,21 @@ package handler
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	logf "sigs.k8s.io/controller-runtime/pkg/internal/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 )
 
 var _ EventHandler = &EnqueueRequestForOwner{}
 
-var log = logf.KBLog.WithName("eventhandler").WithName("EnqueueRequestForOwner")
+var log = logf.RuntimeLog.WithName("eventhandler").WithName("EnqueueRequestForOwner")
 
 // EnqueueRequestForOwner enqueues Requests for the Owners of an object.  E.g. the object that created
 // the object that was the source of the Event.
@@ -51,35 +52,44 @@ type EnqueueRequestForOwner struct {
 
 	// groupKind is the cached Group and Kind from OwnerType
 	groupKind schema.GroupKind
+
+	// mapper maps GroupVersionKinds to Resources
+	mapper meta.RESTMapper
 }
 
 // Create implements EventHandler
 func (e *EnqueueRequestForOwner) Create(evt event.CreateEvent, q workqueue.RateLimitingInterface) {
-	for _, req := range e.getOwnerReconcileRequest(evt.Meta) {
+	reqs := map[reconcile.Request]empty{}
+	e.getOwnerReconcileRequest(evt.Object, reqs)
+	for req := range reqs {
 		q.Add(req)
 	}
 }
 
 // Update implements EventHandler
 func (e *EnqueueRequestForOwner) Update(evt event.UpdateEvent, q workqueue.RateLimitingInterface) {
-	for _, req := range e.getOwnerReconcileRequest(evt.MetaOld) {
-		q.Add(req)
-	}
-	for _, req := range e.getOwnerReconcileRequest(evt.MetaNew) {
+	reqs := map[reconcile.Request]empty{}
+	e.getOwnerReconcileRequest(evt.ObjectOld, reqs)
+	e.getOwnerReconcileRequest(evt.ObjectNew, reqs)
+	for req := range reqs {
 		q.Add(req)
 	}
 }
 
 // Delete implements EventHandler
 func (e *EnqueueRequestForOwner) Delete(evt event.DeleteEvent, q workqueue.RateLimitingInterface) {
-	for _, req := range e.getOwnerReconcileRequest(evt.Meta) {
+	reqs := map[reconcile.Request]empty{}
+	e.getOwnerReconcileRequest(evt.Object, reqs)
+	for req := range reqs {
 		q.Add(req)
 	}
 }
 
 // Generic implements EventHandler
 func (e *EnqueueRequestForOwner) Generic(evt event.GenericEvent, q workqueue.RateLimitingInterface) {
-	for _, req := range e.getOwnerReconcileRequest(evt.Meta) {
+	reqs := map[reconcile.Request]empty{}
+	e.getOwnerReconcileRequest(evt.Object, reqs)
+	for req := range reqs {
 		q.Add(req)
 	}
 }
@@ -105,19 +115,18 @@ func (e *EnqueueRequestForOwner) parseOwnerTypeGroupKind(scheme *runtime.Scheme)
 	return nil
 }
 
-// getOwnerReconcileRequest looks at object and returns a slice of reconcile.Request to reconcile
+// getOwnerReconcileRequest looks at object and builds a map of reconcile.Request to reconcile
 // owners of object that match e.OwnerType.
-func (e *EnqueueRequestForOwner) getOwnerReconcileRequest(object metav1.Object) []reconcile.Request {
+func (e *EnqueueRequestForOwner) getOwnerReconcileRequest(object metav1.Object, result map[reconcile.Request]empty) {
 	// Iterate through the OwnerReferences looking for a match on Group and Kind against what was requested
 	// by the user
-	var result []reconcile.Request
 	for _, ref := range e.getOwnersReferences(object) {
 		// Parse the Group out of the OwnerReference to compare it to what was parsed out of the requested OwnerType
 		refGV, err := schema.ParseGroupVersion(ref.APIVersion)
 		if err != nil {
 			log.Error(err, "Could not parse OwnerReference APIVersion",
 				"api version", ref.APIVersion)
-			return nil
+			return
 		}
 
 		// Compare the OwnerReference Group and Kind against the OwnerType Group and Kind specified by the user.
@@ -126,15 +135,23 @@ func (e *EnqueueRequestForOwner) getOwnerReconcileRequest(object metav1.Object) 
 		// object in the event.
 		if ref.Kind == e.groupKind.Kind && refGV.Group == e.groupKind.Group {
 			// Match found - add a Request for the object referred to in the OwnerReference
-			result = append(result, reconcile.Request{NamespacedName: types.NamespacedName{
-				Namespace: object.GetNamespace(),
-				Name:      ref.Name,
-			}})
+			request := reconcile.Request{NamespacedName: types.NamespacedName{
+				Name: ref.Name,
+			}}
+
+			// if owner is not namespaced then we should set the namespace to the empty
+			mapping, err := e.mapper.RESTMapping(e.groupKind, refGV.Version)
+			if err != nil {
+				log.Error(err, "Could not retrieve rest mapping", "kind", e.groupKind)
+				return
+			}
+			if mapping.Scope.Name() != meta.RESTScopeNameRoot {
+				request.Namespace = object.GetNamespace()
+			}
+
+			result[request] = empty{}
 		}
 	}
-
-	// Return the matches
-	return result
 }
 
 // getOwnersReferences returns the OwnerReferences for an object as specified by the EnqueueRequestForOwner
@@ -162,4 +179,12 @@ var _ inject.Scheme = &EnqueueRequestForOwner{}
 // InjectScheme is called by the Controller to provide a singleton scheme to the EnqueueRequestForOwner.
 func (e *EnqueueRequestForOwner) InjectScheme(s *runtime.Scheme) error {
 	return e.parseOwnerTypeGroupKind(s)
+}
+
+var _ inject.Mapper = &EnqueueRequestForOwner{}
+
+// InjectMapper  is called by the Controller to provide the rest mapper used by the manager.
+func (e *EnqueueRequestForOwner) InjectMapper(m meta.RESTMapper) error {
+	e.mapper = m
+	return nil
 }

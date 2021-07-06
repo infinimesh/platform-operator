@@ -17,7 +17,7 @@ import (
 
 	"encoding/base64"
 
-	infinimeshv1beta1 "github.com/infinimesh/operator/pkg/apis/infinimesh/v1beta1"
+	infinimeshv1beta1 "github.com/infinimesh/enterprise-operator/pkg/apis/infinimesh/v1beta1"
 )
 
 // GenerateRandomBytes returns securely generated random bytes.

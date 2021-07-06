@@ -1,12 +1,9 @@
 /*
 Copyright 2019 infinimesh, inc.
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,14 +23,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	extensionsv1vbeta1 "k8s.io/api/extensions/v1beta1"
 
-	infinimeshv1beta1 "github.com/infinimesh/operator/pkg/apis/infinimesh/v1beta1"
+	infinimeshv1beta1 "github.com/infinimesh/enterprise-operator/pkg/apis/infinimesh/v1beta1"
 )
 
 var logger = logf.Log.WithName("controller")
@@ -51,6 +48,11 @@ func Add(mgr manager.Manager) error {
 
 // newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager) reconcile.Reconciler {
+	/*c := reconcile.Func(func(context.Context, reconcile.Request) (reconcile.Result, error) {
+		// Your business logic to implement the API by creating, updating, deleting objects goes here.
+		return reconcile.Result{}, nil
+	})
+	return c*/
 	return &ReconcilePlatform{Client: mgr.GetClient(), scheme: mgr.GetScheme()}
 }
 
@@ -124,14 +126,14 @@ type ReconcilePlatform struct {
 // +kubebuilder:rbac:groups=core,resources=secrets;services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=extensions,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=infinimesh.infinimesh.io,resources=platforms,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=infinimesh.infinimesh.io,resources=platforms/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=infinimesh.enterprise.io,resources=platforms,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=infinimesh.enterprise.io,resources=platforms/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kubedb.com,resources=postgreses,verbs=get;list;watch;create;update;patch;delete
-func (r *ReconcilePlatform) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *ReconcilePlatform) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	// Fetch the Platform instance
 	instance := &infinimeshv1beta1.Platform{}
 
-	err := r.Get(context.TODO(), request.NamespacedName, instance)
+	err := r.Client.Get(ctx, request.NamespacedName, instance)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Object not found, return.  Created objects are automatically garbage collected.
