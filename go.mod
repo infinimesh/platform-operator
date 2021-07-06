@@ -13,7 +13,5 @@ require (
 	k8s.io/api v0.21.1
 	k8s.io/apimachinery v0.21.1
 	k8s.io/client-go v0.21.1
-	k8s.io/code-generator v0.21.2 // indirect
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.0.19 // indirect
 	sigs.k8s.io/controller-runtime v0.9.0
 )
