@@ -7,8 +7,8 @@ COPY pkg/    pkg/
 COPY cmd/    cmd/
 COPY vendor/ vendor/
 COPY pkg/ vendor/github.com/infinimesh/enterprise-operator/pkg/
-RUN ls -la
-RUN ls -la /usr/local/go/src/github.com/googleapis/
+RUN ls -la pkg/ vendor/
+RUn ls -la /
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager github.com/infinimesh/enterprise-operator/cmd/manager
 
