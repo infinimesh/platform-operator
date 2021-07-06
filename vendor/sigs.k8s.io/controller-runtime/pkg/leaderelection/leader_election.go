@@ -17,7 +17,6 @@ limitations under the License.
 package leaderelection
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -31,41 +30,31 @@ import (
 
 const inClusterNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
-// Options provides the required configuration to create a new resource lock.
+// Options provides the required configuration to create a new resource lock
 type Options struct {
 	// LeaderElection determines whether or not to use leader election when
 	// starting the manager.
 	LeaderElection bool
 
-	// LeaderElectionResourceLock determines which resource lock to use for leader election,
-	// defaults to "configmapsleases".
-	LeaderElectionResourceLock string
-
 	// LeaderElectionNamespace determines the namespace in which the leader
-	// election resource will be created.
+	// election configmap will be created.
 	LeaderElectionNamespace string
 
-	// LeaderElectionID determines the name of the resource that leader election
+	// LeaderElectionID determines the name of the configmap that leader election
 	// will use for holding the leader lock.
 	LeaderElectionID string
 }
 
-// NewResourceLock creates a new resource lock for use in a leader election loop.
+// NewResourceLock creates a new config map resource lock for use in a leader
+// election loop
 func NewResourceLock(config *rest.Config, recorderProvider recorder.Provider, options Options) (resourcelock.Interface, error) {
 	if !options.LeaderElection {
 		return nil, nil
 	}
 
-	// Default resource lock to "configmapsleases". We must keep this default until we are sure all controller-runtime
-	// users have upgraded from the original default ConfigMap lock to a controller-runtime version that has this new
-	// default. Many users of controller-runtime skip versions, so we should be extremely conservative here.
-	if options.LeaderElectionResourceLock == "" {
-		options.LeaderElectionResourceLock = resourcelock.ConfigMapsLeasesResourceLock
-	}
-
-	// LeaderElectionID must be provided to prevent clashes
+	// Default the LeaderElectionID
 	if options.LeaderElectionID == "" {
-		return nil, errors.New("LeaderElectionID must be configured")
+		options.LeaderElectionID = "controller-leader-election-helper"
 	}
 
 	// Default the namespace (if running in cluster)
@@ -73,7 +62,7 @@ func NewResourceLock(config *rest.Config, recorderProvider recorder.Provider, op
 		var err error
 		options.LeaderElectionNamespace, err = getInClusterNamespace()
 		if err != nil {
-			return nil, fmt.Errorf("unable to find leader election namespace: %w", err)
+			return nil, fmt.Errorf("unable to find leader election namespace: %v", err)
 		}
 	}
 
@@ -85,16 +74,16 @@ func NewResourceLock(config *rest.Config, recorderProvider recorder.Provider, op
 	id = id + "_" + string(uuid.NewUUID())
 
 	// Construct client for leader election
-	client, err := kubernetes.NewForConfig(rest.AddUserAgent(config, "leader-election"))
+	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
 	}
 
-	return resourcelock.New(options.LeaderElectionResourceLock,
+	// TODO(JoelSpeed): switch to leaderelection object in 1.12
+	return resourcelock.New(resourcelock.ConfigMapsResourceLock,
 		options.LeaderElectionNamespace,
 		options.LeaderElectionID,
 		client.CoreV1(),
-		client.CoordinationV1(),
 		resourcelock.ResourceLockConfig{
 			Identity:      id,
 			EventRecorder: recorderProvider.GetEventRecorderFor(id),
@@ -104,16 +93,17 @@ func NewResourceLock(config *rest.Config, recorderProvider recorder.Provider, op
 func getInClusterNamespace() (string, error) {
 	// Check whether the namespace file exists.
 	// If not, we are not running in cluster so can't guess the namespace.
-	if _, err := os.Stat(inClusterNamespacePath); os.IsNotExist(err) {
+	_, err := os.Stat(inClusterNamespacePath)
+	if os.IsNotExist(err) {
 		return "", fmt.Errorf("not running in-cluster, please specify LeaderElectionNamespace")
 	} else if err != nil {
-		return "", fmt.Errorf("error checking namespace file: %w", err)
+		return "", fmt.Errorf("error checking namespace file: %v", err)
 	}
 
-	// Load the namespace file and return its content
+	// Load the namespace file and return itss content
 	namespace, err := ioutil.ReadFile(inClusterNamespacePath)
 	if err != nil {
-		return "", fmt.Errorf("error reading namespace file: %w", err)
+		return "", fmt.Errorf("error reading namespace file: %v", err)
 	}
 	return string(namespace), nil
 }

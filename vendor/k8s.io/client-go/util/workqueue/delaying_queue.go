@@ -18,7 +18,6 @@ package workqueue
 
 import (
 	"container/heap"
-	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/clock"
@@ -35,29 +34,16 @@ type DelayingInterface interface {
 
 // NewDelayingQueue constructs a new workqueue with delayed queuing ability
 func NewDelayingQueue() DelayingInterface {
-	return NewDelayingQueueWithCustomClock(clock.RealClock{}, "")
+	return newDelayingQueue(clock.RealClock{}, "")
 }
 
-// NewDelayingQueueWithCustomQueue constructs a new workqueue with ability to
-// inject custom queue Interface instead of the default one
-func NewDelayingQueueWithCustomQueue(q Interface, name string) DelayingInterface {
-	return newDelayingQueue(clock.RealClock{}, q, name)
-}
-
-// NewNamedDelayingQueue constructs a new named workqueue with delayed queuing ability
 func NewNamedDelayingQueue(name string) DelayingInterface {
-	return NewDelayingQueueWithCustomClock(clock.RealClock{}, name)
+	return newDelayingQueue(clock.RealClock{}, name)
 }
 
-// NewDelayingQueueWithCustomClock constructs a new named workqueue
-// with ability to inject real or fake clock for testing purposes
-func NewDelayingQueueWithCustomClock(clock clock.Clock, name string) DelayingInterface {
-	return newDelayingQueue(clock, NewNamed(name), name)
-}
-
-func newDelayingQueue(clock clock.Clock, q Interface, name string) *delayingType {
+func newDelayingQueue(clock clock.Clock, name string) DelayingInterface {
 	ret := &delayingType{
-		Interface:       q,
+		Interface:       NewNamed(name),
 		clock:           clock,
 		heartbeat:       clock.NewTicker(maxWait),
 		stopCh:          make(chan struct{}),
@@ -66,6 +52,7 @@ func newDelayingQueue(clock clock.Clock, q Interface, name string) *delayingType
 	}
 
 	go ret.waitingLoop()
+
 	return ret
 }
 
@@ -78,8 +65,6 @@ type delayingType struct {
 
 	// stopCh lets us signal a shutdown to the waiting loop
 	stopCh chan struct{}
-	// stopOnce guarantees we only signal shutdown a single time
-	stopOnce sync.Once
 
 	// heartbeat ensures we wait no more than maxWait before firing
 	heartbeat clock.Ticker
@@ -146,14 +131,11 @@ func (pq waitForPriorityQueue) Peek() interface{} {
 	return pq[0]
 }
 
-// ShutDown stops the queue. After the queue drains, the returned shutdown bool
-// on Get() will be true. This method may be invoked more than once.
+// ShutDown gives a way to shut off this queue
 func (q *delayingType) ShutDown() {
-	q.stopOnce.Do(func() {
-		q.Interface.ShutDown()
-		close(q.stopCh)
-		q.heartbeat.Stop()
-	})
+	q.Interface.ShutDown()
+	close(q.stopCh)
+	q.heartbeat.Stop()
 }
 
 // AddAfter adds the given item to the work queue after the given delay
@@ -190,9 +172,6 @@ func (q *delayingType) waitingLoop() {
 	// Make a placeholder channel to use when there are no items in our list
 	never := make(<-chan time.Time)
 
-	// Make a timer that expires when the item at the head of the waiting queue is ready
-	var nextReadyAtTimer clock.Timer
-
 	waitingForQueue := &waitForPriorityQueue{}
 	heap.Init(waitingForQueue)
 
@@ -220,12 +199,8 @@ func (q *delayingType) waitingLoop() {
 		// Set up a wait for the first item's readyAt (if one exists)
 		nextReadyAt := never
 		if waitingForQueue.Len() > 0 {
-			if nextReadyAtTimer != nil {
-				nextReadyAtTimer.Stop()
-			}
 			entry := waitingForQueue.Peek().(*waitFor)
-			nextReadyAtTimer = q.clock.NewTimer(entry.readyAt.Sub(now))
-			nextReadyAt = nextReadyAtTimer.C()
+			nextReadyAt = q.clock.After(entry.readyAt.Sub(now))
 		}
 
 		select {

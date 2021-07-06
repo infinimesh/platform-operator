@@ -17,13 +17,10 @@ limitations under the License.
 package internal
 
 import (
-	"context"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,17 +28,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-// clientListWatcherFunc knows how to create a ListWatcher.
+// clientListWatcherFunc knows how to create a ListWatcher
 type createListWatcherFunc func(gvk schema.GroupVersionKind, ip *specificInformersMap) (*cache.ListWatch, error)
 
 // newSpecificInformersMap returns a new specificInformersMap (like
@@ -51,7 +44,6 @@ func newSpecificInformersMap(config *rest.Config,
 	mapper meta.RESTMapper,
 	resync time.Duration,
 	namespace string,
-	selectors SelectorsByGVK,
 	createListWatcher createListWatcherFunc) *specificInformersMap {
 	ip := &specificInformersMap{
 		config:            config,
@@ -61,15 +53,13 @@ func newSpecificInformersMap(config *rest.Config,
 		codecs:            serializer.NewCodecFactory(scheme),
 		paramCodec:        runtime.NewParameterCodec(scheme),
 		resync:            resync,
-		startWait:         make(chan struct{}),
 		createListWatcher: createListWatcher,
 		namespace:         namespace,
-		selectors:         selectors,
 	}
 	return ip
 }
 
-// MapEntry contains the cached data for an Informer.
+// MapEntry contains the cached data for an Informer
 type MapEntry struct {
 	// Informer is the cached informer
 	Informer cache.SharedIndexInformer
@@ -102,9 +92,7 @@ type specificInformersMap struct {
 	// stop is the stop channel to stop informers
 	stop <-chan struct{}
 
-	// resync is the base frequency the informers are resynced
-	// a 10 percent jitter will be added to the resync period between informers
-	// so that all informers will not send list requests simultaneously.
+	// resync is the frequency the informers are resynced
 	resync time.Duration
 
 	// mu guards access to the map
@@ -112,10 +100,6 @@ type specificInformersMap struct {
 
 	// start is true if the informers have been started
 	started bool
-
-	// startWait is a channel that is closed after the
-	// informer has been started.
-	startWait chan struct{}
 
 	// createClient knows how to create a client and a list object,
 	// and allows for abstracting over the particulars of structured vs
@@ -125,41 +109,27 @@ type specificInformersMap struct {
 	// namespace is the namespace that all ListWatches are restricted to
 	// default or empty string means all namespaces
 	namespace string
-
-	// selectors are the label or field selectors that will be added to the
-	// ListWatch ListOptions.
-	selectors SelectorsByGVK
 }
 
-// Start calls Run on each of the informers and sets started to true.  Blocks on the context.
+// Start calls Run on each of the informers and sets started to true.  Blocks on the stop channel.
 // It doesn't return start because it can't return an error, and it's not a runnable directly.
-func (ip *specificInformersMap) Start(ctx context.Context) {
+func (ip *specificInformersMap) Start(stop <-chan struct{}) {
 	func() {
 		ip.mu.Lock()
 		defer ip.mu.Unlock()
 
 		// Set the stop channel so it can be passed to informers that are added later
-		ip.stop = ctx.Done()
+		ip.stop = stop
 
 		// Start each informer
 		for _, informer := range ip.informersByGVK {
-			go informer.Informer.Run(ctx.Done())
+			go informer.Informer.Run(stop)
 		}
 
 		// Set started to true so we immediately start any informers added later.
 		ip.started = true
-		close(ip.startWait)
 	}()
-	<-ctx.Done()
-}
-
-func (ip *specificInformersMap) waitForStarted(ctx context.Context) bool {
-	select {
-	case <-ip.startWait:
-		return true
-	case <-ctx.Done():
-		return false
-	}
+	<-stop
 }
 
 // HasSyncedFuncs returns all the HasSynced functions for the informers in this map.
@@ -175,76 +145,70 @@ func (ip *specificInformersMap) HasSyncedFuncs() []cache.InformerSynced {
 
 // Get will create a new Informer and add it to the map of specificInformersMap if none exists.  Returns
 // the Informer from the map.
-func (ip *specificInformersMap) Get(ctx context.Context, gvk schema.GroupVersionKind, obj runtime.Object) (bool, *MapEntry, error) {
+func (ip *specificInformersMap) Get(gvk schema.GroupVersionKind, obj runtime.Object) (*MapEntry, error) {
 	// Return the informer if it is found
-	i, started, ok := func() (*MapEntry, bool, bool) {
+	i, ok := func() (*MapEntry, bool) {
 		ip.mu.RLock()
 		defer ip.mu.RUnlock()
 		i, ok := ip.informersByGVK[gvk]
-		return i, ip.started, ok
+		return i, ok
 	}()
-
-	if !ok {
-		var err error
-		if i, started, err = ip.addInformerToMap(gvk, obj); err != nil {
-			return started, nil, err
-		}
+	if ok {
+		return i, nil
 	}
 
-	if started && !i.Informer.HasSynced() {
+	// Do the mutex part in its own function so we can use defer without blocking pieces that don't
+	// need to be locked
+	var sync bool
+	i, err := func() (*MapEntry, error) {
+		ip.mu.Lock()
+		defer ip.mu.Unlock()
+
+		// Check the cache to see if we already have an Informer.  If we do, return the Informer.
+		// This is for the case where 2 routines tried to get the informer when it wasn't in the map
+		// so neither returned early, but the first one created it.
+		var ok bool
+		i, ok := ip.informersByGVK[gvk]
+		if ok {
+			return i, nil
+		}
+
+		// Create a NewSharedIndexInformer and add it to the map.
+		var lw *cache.ListWatch
+		lw, err := ip.createListWatcher(gvk, ip)
+		if err != nil {
+			return nil, err
+		}
+		ni := cache.NewSharedIndexInformer(lw, obj, ip.resync, cache.Indexers{
+			cache.NamespaceIndex: cache.MetaNamespaceIndexFunc,
+		})
+		i = &MapEntry{
+			Informer: ni,
+			Reader:   CacheReader{indexer: ni.GetIndexer(), groupVersionKind: gvk},
+		}
+		ip.informersByGVK[gvk] = i
+
+		// Start the Informer if need by
+		// TODO(seans): write thorough tests and document what happens here - can you add indexers?
+		// can you add eventhandlers?
+		if ip.started {
+			sync = true
+			go i.Informer.Run(ip.stop)
+		}
+		return i, nil
+	}()
+	if err != nil {
+		return nil, err
+	}
+
+	if sync {
 		// Wait for it to sync before returning the Informer so that folks don't read from a stale cache.
-		if !cache.WaitForCacheSync(ctx.Done(), i.Informer.HasSynced) {
-			return started, nil, apierrors.NewTimeoutError(fmt.Sprintf("failed waiting for %T Informer to sync", obj), 0)
+		if !cache.WaitForCacheSync(ip.stop, i.Informer.HasSynced) {
+			return nil, fmt.Errorf("failed waiting for %T Informer to sync", obj)
 		}
 	}
 
-	return started, i, nil
-}
-
-func (ip *specificInformersMap) addInformerToMap(gvk schema.GroupVersionKind, obj runtime.Object) (*MapEntry, bool, error) {
-	ip.mu.Lock()
-	defer ip.mu.Unlock()
-
-	// Check the cache to see if we already have an Informer.  If we do, return the Informer.
-	// This is for the case where 2 routines tried to get the informer when it wasn't in the map
-	// so neither returned early, but the first one created it.
-	if i, ok := ip.informersByGVK[gvk]; ok {
-		return i, ip.started, nil
-	}
-
-	// Create a NewSharedIndexInformer and add it to the map.
-	var lw *cache.ListWatch
-	lw, err := ip.createListWatcher(gvk, ip)
-	if err != nil {
-		return nil, false, err
-	}
-	ni := cache.NewSharedIndexInformer(lw, obj, resyncPeriod(ip.resync)(), cache.Indexers{
-		cache.NamespaceIndex: cache.MetaNamespaceIndexFunc,
-	})
-	rm, err := ip.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return nil, false, err
-	}
-
-	switch obj.(type) {
-	case *metav1.PartialObjectMetadata, *metav1.PartialObjectMetadataList:
-		ni = metadataSharedIndexInformerPreserveGVK(gvk, ni)
-	default:
-	}
-
-	i := &MapEntry{
-		Informer: ni,
-		Reader:   CacheReader{indexer: ni.GetIndexer(), groupVersionKind: gvk, scopeName: rm.Scope.Name()},
-	}
-	ip.informersByGVK[gvk] = i
-
-	// Start the Informer if need by
-	// TODO(seans): write thorough tests and document what happens here - can you add indexers?
-	// can you add eventhandlers?
-	if ip.started {
-		go i.Informer.Run(ip.stop)
-	}
-	return i, ip.started, nil
+	return i, err
 }
 
 // newListWatch returns a new ListWatch object that can be used to create a SharedIndexInformer.
@@ -256,7 +220,7 @@ func createStructuredListWatch(gvk schema.GroupVersionKind, ip *specificInformer
 		return nil, err
 	}
 
-	client, err := apiutil.RESTClientForGVK(gvk, false, ip.config, ip.codecs)
+	client, err := apiutil.RESTClientForGVK(gvk, ip.config, ip.codecs)
 	if err != nil {
 		return nil, err
 	}
@@ -266,25 +230,20 @@ func createStructuredListWatch(gvk schema.GroupVersionKind, ip *specificInformer
 		return nil, err
 	}
 
-	// TODO: the functions that make use of this ListWatch should be adapted to
-	//  pass in their own contexts instead of relying on this fixed one here.
-	ctx := context.TODO()
 	// Create a new ListWatch for the obj
 	return &cache.ListWatch{
 		ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
-			ip.selectors[gvk].ApplyToList(&opts)
 			res := listObj.DeepCopyObject()
 			isNamespaceScoped := ip.namespace != "" && mapping.Scope.Name() != meta.RESTScopeNameRoot
-			err := client.Get().NamespaceIfScoped(ip.namespace, isNamespaceScoped).Resource(mapping.Resource.Resource).VersionedParams(&opts, ip.paramCodec).Do(ctx).Into(res)
+			err := client.Get().NamespaceIfScoped(ip.namespace, isNamespaceScoped).Resource(mapping.Resource.Resource).VersionedParams(&opts, ip.paramCodec).Do().Into(res)
 			return res, err
 		},
 		// Setup the watch function
 		WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
-			ip.selectors[gvk].ApplyToList(&opts)
 			// Watch needs to be set to true separately
 			opts.Watch = true
 			isNamespaceScoped := ip.namespace != "" && mapping.Scope.Name() != meta.RESTScopeNameRoot
-			return client.Get().NamespaceIfScoped(ip.namespace, isNamespaceScoped).Resource(mapping.Resource.Resource).VersionedParams(&opts, ip.paramCodec).Watch(ctx)
+			return client.Get().NamespaceIfScoped(ip.namespace, isNamespaceScoped).Resource(mapping.Resource.Resource).VersionedParams(&opts, ip.paramCodec).Watch()
 		},
 	}, nil
 }
@@ -296,93 +255,27 @@ func createUnstructuredListWatch(gvk schema.GroupVersionKind, ip *specificInform
 	if err != nil {
 		return nil, err
 	}
-
-	// If the rest configuration has a negotiated serializer passed in,
-	// we should remove it and use the one that the dynamic client sets for us.
-	cfg := rest.CopyConfig(ip.config)
-	cfg.NegotiatedSerializer = nil
-	dynamicClient, err := dynamic.NewForConfig(cfg)
+	dynamicClient, err := dynamic.NewForConfig(ip.config)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: the functions that make use of this ListWatch should be adapted to
-	//  pass in their own contexts instead of relying on this fixed one here.
-	ctx := context.TODO()
 	// Create a new ListWatch for the obj
 	return &cache.ListWatch{
 		ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
-			ip.selectors[gvk].ApplyToList(&opts)
 			if ip.namespace != "" && mapping.Scope.Name() != meta.RESTScopeNameRoot {
-				return dynamicClient.Resource(mapping.Resource).Namespace(ip.namespace).List(ctx, opts)
+				return dynamicClient.Resource(mapping.Resource).Namespace(ip.namespace).List(opts)
 			}
-			return dynamicClient.Resource(mapping.Resource).List(ctx, opts)
+			return dynamicClient.Resource(mapping.Resource).List(opts)
 		},
 		// Setup the watch function
 		WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
-			ip.selectors[gvk].ApplyToList(&opts)
 			// Watch needs to be set to true separately
 			opts.Watch = true
 			if ip.namespace != "" && mapping.Scope.Name() != meta.RESTScopeNameRoot {
-				return dynamicClient.Resource(mapping.Resource).Namespace(ip.namespace).Watch(ctx, opts)
+				return dynamicClient.Resource(mapping.Resource).Namespace(ip.namespace).Watch(opts)
 			}
-			return dynamicClient.Resource(mapping.Resource).Watch(ctx, opts)
+			return dynamicClient.Resource(mapping.Resource).Watch(opts)
 		},
 	}, nil
-}
-
-func createMetadataListWatch(gvk schema.GroupVersionKind, ip *specificInformersMap) (*cache.ListWatch, error) {
-	// Kubernetes APIs work against Resources, not GroupVersionKinds.  Map the
-	// groupVersionKind to the Resource API we will use.
-	mapping, err := ip.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return nil, err
-	}
-
-	// Always clear the negotiated serializer and use the one
-	// set from the metadata client.
-	cfg := rest.CopyConfig(ip.config)
-	cfg.NegotiatedSerializer = nil
-
-	// grab the metadata client
-	client, err := metadata.NewForConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	// TODO: the functions that make use of this ListWatch should be adapted to
-	//  pass in their own contexts instead of relying on this fixed one here.
-	ctx := context.TODO()
-
-	// create the relevant listwatch
-	return &cache.ListWatch{
-		ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
-			ip.selectors[gvk].ApplyToList(&opts)
-			if ip.namespace != "" && mapping.Scope.Name() != meta.RESTScopeNameRoot {
-				return client.Resource(mapping.Resource).Namespace(ip.namespace).List(ctx, opts)
-			}
-			return client.Resource(mapping.Resource).List(ctx, opts)
-		},
-		// Setup the watch function
-		WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
-			ip.selectors[gvk].ApplyToList(&opts)
-			// Watch needs to be set to true separately
-			opts.Watch = true
-			if ip.namespace != "" && mapping.Scope.Name() != meta.RESTScopeNameRoot {
-				return client.Resource(mapping.Resource).Namespace(ip.namespace).Watch(ctx, opts)
-			}
-			return client.Resource(mapping.Resource).Watch(ctx, opts)
-		},
-	}, nil
-}
-
-// resyncPeriod returns a function which generates a duration each time it is
-// invoked; this is so that multiple controllers don't get into lock-step and all
-// hammer the apiserver with list requests simultaneously.
-func resyncPeriod(resync time.Duration) func() time.Duration {
-	return func() time.Duration {
-		// the factor will fall into [0.9, 1.1)
-		factor := rand.Float64()/5.0 + 0.9 //nolint:gosec
-		return time.Duration(float64(resync.Nanoseconds()) * factor)
-	}
 }
