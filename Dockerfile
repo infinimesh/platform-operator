@@ -8,7 +8,9 @@ COPY cmd/    cmd/
 COPY vendor/ vendor/
 COPY pkg/ vendor/github.com/infinimesh/enterprise-operator/pkg/
 # Build
-RUN go get github.com/googleapis/gnostic@0.4.0
+RUN ls -l /go/src/github.com/googleapis/gnostic*
+RUN rm -rf /go/src/github.com/googleapis/gnostic/
+RUN go mod download github.com/googleapis/gnostic@0.4.0
 RUN ls -la 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager github.com/infinimesh/enterprise-operator/cmd/manager
 
