@@ -249,7 +249,7 @@ func (r *ReconcilePlatform) reconcileDgraph(request reconcile.Request, instance 
 					Containers: []corev1.Container{
 						{
 							Name:            "zero",
-							Image:           "dgraph/dgraph:v1.0.14",
+							Image:           "dgraph/dgraph:v21.03.0",
 							ImagePullPolicy: corev1.PullAlways,
 							Ports: []corev1.ContainerPort{
 								{
