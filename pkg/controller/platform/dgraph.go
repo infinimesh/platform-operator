@@ -474,7 +474,7 @@ fi
 								"bash",
 								"-c",
 								`set -ex
-dgraph alpha --my=$(hostname -f):7080 --lru_mb 2048 --zero ` + instance.Name + `-dgraph-zero-0.` + instance.Name + `-dgraph-zero.${POD_NAMESPACE}.svc.cluster.local:5080`,
+dgraph alpha --my=$(hostname -f):7080 --cache size-mb=2048 --zero ` + instance.Name + `-dgraph-zero-0.` + instance.Name + `-dgraph-zero.${POD_NAMESPACE}.svc.cluster.local:5080`,
 							},
 						},
 					},
