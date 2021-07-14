@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path"
-	"strconv"
 	"time"
 
 	"github.com/onsi/gomega/gbytes"
@@ -40,10 +38,6 @@ type ProcessState struct {
 	// Deprecated: Use HealthCheckEndpoint in favour of StartMessage
 	StartMessage string
 	Args         []string
-
-	// ready holds wether the process is currently in ready state (hit the ready condition) or not.
-	// It will be set to true on a successful `Start()` and set to false on a successful `Stop()`
-	ready bool
 }
 
 type DefaultedProcessInput struct {
@@ -77,7 +71,7 @@ func DoDefaulting(
 		}
 		defaults.URL = url.URL{
 			Scheme: "http",
-			Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+			Host:   fmt.Sprintf("%s:%d", host, port),
 		}
 	} else {
 		defaults.URL = *listenUrl
@@ -113,10 +107,6 @@ func DoDefaulting(
 type stopChannel chan struct{}
 
 func (ps *ProcessState) Start(stdout, stderr io.Writer) (err error) {
-	if ps.ready {
-		return nil
-	}
-
 	command := exec.Command(ps.Path, ps.Args...)
 
 	ready := make(chan bool)
@@ -141,7 +131,6 @@ func (ps *ProcessState) Start(stdout, stderr io.Writer) (err error) {
 
 	select {
 	case <-ready:
-		ps.ready = true
 		return nil
 	case <-timedOut:
 		if pollerStopCh != nil {
@@ -205,7 +194,7 @@ func (ps *ProcessState) Stop() error {
 	case <-timedOut:
 		return fmt.Errorf("timeout waiting for process %s to stop", path.Base(ps.Path))
 	}
-	ps.ready = false
+
 	if ps.DirNeedsCleaning {
 		return os.RemoveAll(ps.Dir)
 	}

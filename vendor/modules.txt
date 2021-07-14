@@ -464,7 +464,7 @@ k8s.io/client-go/util/integer
 k8s.io/client-go/util/jsonpath
 k8s.io/client-go/util/retry
 k8s.io/client-go/util/workqueue
-# k8s.io/klog v0.3.1
+# k8s.io/klog v0.3.1 => k8s.io/klog v0.2.0
 ## explicit
 k8s.io/klog
 # k8s.io/kube-openapi v0.0.0-20210527164424-3c818078ee3d => k8s.io/kube-openapi v0.0.0-20190306001800-15615b16d372
@@ -503,12 +503,12 @@ sigs.k8s.io/controller-runtime/pkg/webhook/admission
 sigs.k8s.io/controller-runtime/pkg/webhook/admission/types
 sigs.k8s.io/controller-runtime/pkg/webhook/internal/metrics
 sigs.k8s.io/controller-runtime/pkg/webhook/types
-# sigs.k8s.io/testing_frameworks v0.1.2
+# sigs.k8s.io/testing_frameworks v0.1.2 => sigs.k8s.io/testing_frameworks v0.1.1
 ## explicit
 sigs.k8s.io/testing_frameworks/integration
 sigs.k8s.io/testing_frameworks/integration/addr
 sigs.k8s.io/testing_frameworks/integration/internal
-# sigs.k8s.io/yaml v1.2.0
+# sigs.k8s.io/yaml v1.2.0 => sigs.k8s.io/yaml v1.2.0
 ## explicit
 sigs.k8s.io/yaml
 # k8s.io/api => k8s.io/api v0.0.0-20181213150558-05914d821849
@@ -518,3 +518,6 @@ sigs.k8s.io/yaml
 # k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.0.0-20181213153335-0fe22c71c476
 # github.com/googleapis/gnostic => github.com/googleapis/gnostic v0.2.0
 # k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20190306001800-15615b16d372
+# k8s.io/klog => k8s.io/klog v0.2.0
+# sigs.k8s.io/testing_frameworks => sigs.k8s.io/testing_frameworks v0.1.1
+# sigs.k8s.io/yaml => sigs.k8s.io/yaml v1.2.0
