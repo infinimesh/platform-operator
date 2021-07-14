@@ -285,9 +285,9 @@ func (r *ReconcilePlatform) reconcileDgraph(request reconcile.Request, instance 
 ordinal=${BASH_REMATCH[1]}
 idx=$(($ordinal + 1))
 if [[ $ordinal -eq 0 ]]; then
-dgraph zero --my=$(hostname -f):5080 --replicas 3
+dgraph zero --my=$(hostname -f):5080 --idx $idx --replicas 3
 else
-dgraph zero --my=$(hostname -f):5080 --peer ` + instance.Name + `-dgraph-zero-0.` + instance.Name + `-dgraph-zero.${POD_NAMESPACE}.svc.cluster.local:5080 --replicas 3
+dgraph zero --my=$(hostname -f):5080 --peer ` + instance.Name + `-dgraph-zero-0.` + instance.Name + `-dgraph-zero.${POD_NAMESPACE}.svc.cluster.local:5080 --idx $idx --replicas 3
 fi
 `,
 							},

@@ -1,6 +1,6 @@
 module github.com/infinimesh/enterprise-operator
 
-go 1.15
+go 1.16
 
 require (
 	cloud.google.com/go v0.54.0 // indirect
@@ -37,12 +37,15 @@ require (
 )
 
 replace k8s.io/api => k8s.io/api v0.0.0-20181213150558-05914d821849
+
 replace sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.1.10
+
 replace k8s.io/client-go => k8s.io/client-go v0.0.0-20181213151034-8d9ed539ba31
+
 replace k8s.io/apimachinery => k8s.io/apimachinery v0.0.0-20181127025237-2b1284ed4c93
+
 replace k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.0.0-20181213153335-0fe22c71c476
+
 replace github.com/googleapis/gnostic => github.com/googleapis/gnostic v0.2.0
+
 replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20190306001800-15615b16d372
-replace k8s.io/klog => k8s.io/klog v0.2.0
-replace sigs.k8s.io/testing_frameworks => sigs.k8s.io/testing_frameworks v0.1.1
-replace sigs.k8s.io/yaml => sigs.k8s.io/yaml v1.2.0
