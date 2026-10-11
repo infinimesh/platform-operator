@@ -35,6 +35,9 @@ var legacySuffixes = []string{
 	"grafana",
 	"dgraph-zero",
 	"dgraph-alpha",
+	"repo",
+	"web",
+	"handsfree",
 }
 
 func (r *ReconcilePlatform) deleteLegacy(instance *infinimeshv1beta1.Platform) error {
@@ -100,34 +103,34 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 			{Name: "RABBITMQ_DEFAULT_PASS", ValueFrom: secretRef("RABBITMQ_PASS").ValueFrom},
 		}},
 		{suffix: "redis", image: "redis:latest", ports: []int{6379}, data: "/data"},
-		{suffix: "repo", image: coreImage("repo"), ports: []int{8000}, env: []corev1.EnvVar{
+		{suffix: "api", image: coreImage("api"), ports: []int{8000}, env: []corev1.EnvVar{
 			{Name: "DB_HOST", Value: prefix + "-arango:8529"},
 			secretRef("DB_CRED"),
 			{Name: "SHADOW_HOST", Value: prefix + "-shadow:8000"},
-			{Name: "HANDSFREE_HOST", Value: prefix + "-handsfree:8000"},
-			{Name: "REGISTRY_HOST", Value: prefix + "-repo:8000"},
-			{Name: "NAMESPACES_HOST", Value: prefix + "-repo:8000"},
+			{Name: "PAIRING_HOST", Value: prefix + "-pairing:8000"},
+			{Name: "REGISTRY_HOST", Value: prefix + "-api:8000"},
+			{Name: "NAMESPACES_HOST", Value: prefix + "-api:8000"},
 			secretRef("SIGNING_KEY"),
 			secretRef("INF_DEFAULT_ROOT_PASS"),
 		}},
 		{suffix: "shadow", image: coreImage("shadow"), ports: []int{8000}, env: []corev1.EnvVar{
 			secretRef("RABBITMQ_CONN"),
 			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
-			{Name: "DEVICES_HOST", Value: prefix + "-repo:8000"},
+			{Name: "DEVICES_HOST", Value: prefix + "-api:8000"},
 			secretRef("SIGNING_KEY"),
 		}},
 		{suffix: "mqtt-bridge", image: coreImage("mqtt-bridge"), ports: []int{1883, 8883, 2112}, cert: true, env: []corev1.EnvVar{
 			secretRef("RABBITMQ_CONN"),
-			{Name: "DEVICES_HOST", Value: prefix + "-repo:8000"},
+			{Name: "DEVICES_HOST", Value: prefix + "-api:8000"},
 			{Name: "SHADOW_HOST", Value: prefix + "-shadow:8000"},
 			secretRef("SIGNING_KEY"),
 		}},
-		{suffix: "web", image: coreImage("web"), ports: []int{8000}, env: []corev1.EnvVar{
-			{Name: "APISERVER_HOST", Value: prefix + "-repo:8000"},
-			{Name: "HANDSFREE", Value: prefix + "-handsfree:8000"},
+		{suffix: "gateway", image: coreImage("gateway"), ports: []int{8000}, env: []corev1.EnvVar{
+			{Name: "APISERVER_HOST", Value: prefix + "-api:8000"},
+			{Name: "PAIRING", Value: prefix + "-pairing:8000"},
 		}},
 		{suffix: "console", image: coreImage("console"), ports: []int{80}},
-		{suffix: "handsfree", image: coreImage("handsfree"), ports: []int{8000}, env: []corev1.EnvVar{secretRef("SIGNING_KEY")}},
+		{suffix: "pairing", image: coreImage("pairing"), ports: []int{8000}, env: []corev1.EnvVar{secretRef("SIGNING_KEY")}},
 	}
 	for _, item := range work {
 		if item.data != "" {
