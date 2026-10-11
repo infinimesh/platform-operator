@@ -1,6 +1,6 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= quay.io/infinimesh/enterprise-operator:latest
+IMG ?= ghcr.io/infinimesh/platform-operator:latest
 
 all: test manager
 

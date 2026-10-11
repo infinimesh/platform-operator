@@ -1,8 +1,8 @@
 # Infinimesh Kubernetes Operator
 
-[![Docker Repository on Quay](https://quay.io/repository/infinimesh/platform-operator/status "Docker Repository on Quay")](https://quay.io/repository/infinimesh/platform-operator)
+Reconciles a Platform into the [core](https://github.com/infinimesh/core) stack: ArangoDB, RabbitMQ, Redis, and the images `ghcr.io/infinimesh/core/<service>:latest`. On reconcile it deletes the old Kafka and Dgraph workloads (`device-registry`, `nodeserver`, `shadow-api`, `dgraph-alpha`, `dgraph-zero`, and the rest).
 
-Installs an Infinimesh platform into a Kubernetes cluster.
+The static install of the same stack is [k8s](https://github.com/infinimesh/k8s).
 
 ## Installation
 ```
