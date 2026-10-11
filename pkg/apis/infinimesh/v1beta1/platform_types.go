@@ -31,7 +31,6 @@ type PlatformSpec struct {
 	DGraph                   PlatformDgraph                   `json:"dgraph,omitempty" protobuf:"bytes,2,name=dgraph"`
 	DGraphAlpha              PlatformDgraphAlpha              `json:"dgraphAlpha,omitempty" protobuf:"bytes,2,name=dgraphAlpha"`
 	DGraphZero               PlatformDgraphZero               `json:"dgraphZero,omitempty" protobuf:"bytes,2,name=dgraphZero"`
-	Kafka                    PlatformKafka                    `json:"kafka,omitempty" protobuf:"bytes,2,name=kafka"`
 	Apiserver                PlatformApiserver                `json:"apiserver,omitempty" protobuf:"bytes,3,name=apiserver"`
 	App                      PlatformApp                      `json:"app,omitempty" protobuf:"bytes,4,name=app"`
 	InfinimeshDefaultStorage PlatformInfinimeshDefaultStorage `json:"infinimeshDefaultStorage,omitempty" protobuf:"bytes,2,name=infinimeshDefaultStorage"`
@@ -94,10 +93,6 @@ type PlatformRestfulApiserver struct {
 type PlatformGRPCApiserver struct {
 	Host string                         `json:"host,omitempty" protobuf:"bytes,1,name=host"`
 	TLS  []extensionsv1beta1.IngressTLS `json:"tls,omitempty" protobuf:"bytes,2,name=tls"`
-}
-
-type PlatformKafka struct {
-	BootstrapServers string `json:"bootstrapServers,omitempty" protobuf:"bytes,1,name=bootstrapServers"`
 }
 
 type PlatformMQTTBroker struct {

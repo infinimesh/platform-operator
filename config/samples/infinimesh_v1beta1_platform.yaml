@@ -5,8 +5,6 @@ metadata:
     controller-tools.k8s.io: "1.0"
   name: my-infinimesh
 spec:
-  kafka:
-    bootstrapServers: "my-kafka-instance.kafka.svc.cluster.local:9092"
   mqtt:
     secretName: "api-infinimesh-io-tls"
   apiserver:
@@ -61,4 +59,4 @@ spec:
     telemetry-router: false
     twin: false
   host:
-    registry: quay.io
+    registry: ghcr.io/infinimesh/core

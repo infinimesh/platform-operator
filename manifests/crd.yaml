@@ -58,11 +58,6 @@ spec:
                     type: object
                   type: array
               type: object
-            kafka:
-              properties:
-                bootstrapServers:
-                  type: string
-              type: object
             mqtt:
               properties:
                 secretName:
