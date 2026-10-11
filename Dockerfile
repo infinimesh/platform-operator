@@ -1,18 +1,13 @@
-# Build the manager binary
-FROM golang:1.24 as builder
+FROM golang:1.24 AS builder
 
-# Copy in the go src
-WORKDIR /go/src/github.com/infinimesh/enterprise-operator
-COPY pkg/    pkg/
-COPY cmd/    cmd/
-COPY vendor/ vendor/
-COPY pkg/ vendor/github.com/infinimesh/enterprise-operator/pkg/
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY vendor ./vendor
+COPY pkg ./pkg
+COPY cmd ./cmd
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor -o manager ./cmd/manager
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager github.com/infinimesh/enterprise-operator/cmd/manager
-
-# Copy the controller-manager into a thin image
 FROM ubuntu:latest
 WORKDIR /
-COPY --from=builder /go/src/github.com/infinimesh/enterprise-operator/manager .
+COPY --from=builder /src/manager /manager
 ENTRYPOINT ["/manager"]

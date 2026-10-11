@@ -4,6 +4,8 @@ Reconciles a Platform into the [core](https://github.com/infinimesh/core) stack:
 
 The static install of the same stack is [k8s](https://github.com/infinimesh/k8s).
 
+A tag `vX.Y.Z` publishes `ghcr.io/infinimesh/platform-operator:vX.Y.Z` and `:latest`.
+
 ## Installation
 ```
 kubectl apply -f manifests
