@@ -19,13 +19,26 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - id: imgtags
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            ref=main
+          fi
+          delim="tags_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "yaml<<${delim}"
+            sh scripts/image-tags.sh "$ref" | while read -r t; do
+              echo "type=raw,value=${t}"
+            done
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
+
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/infinimesh/platform-operator
-          tags: |
-            type=raw,value=${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
-            type=raw,value=latest
+          tags: ${{ steps.imgtags.outputs.yaml }}
 
       - uses: docker/login-action@v3
         with:
@@ -40,18 +53,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Make the package public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for i in 1 2 3 4 5 6; do
-            if gh api --method PATCH /orgs/infinimesh/packages/container/platform-operator -f visibility=public; then
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
-
       - name: GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
@@ -61,3 +62,19 @@ jobs:
             `ghcr.io/infinimesh/platform-operator:${{ github.ref_name }}` and `:latest`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make the package public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PATCH /orgs/infinimesh/packages/container/platform-operator -f visibility=public || true
+          check="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            check=latest
+          fi
+          image="infinimesh/platform-operator"
+          tok=$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${image}:pull" | jq -er .token)
+          curl -fsS -o /dev/null \
+            -H "Authorization: Bearer ${tok}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json" \
+            "https://ghcr.io/v2/${image}/manifests/${check}"
