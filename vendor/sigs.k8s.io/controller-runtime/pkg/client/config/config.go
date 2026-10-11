@@ -25,29 +25,46 @@ import (
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	logf "sigs.k8s.io/controller-runtime/pkg/internal/log"
 )
+
+// KubeconfigFlagName is the name of the kubeconfig flag
+const KubeconfigFlagName = "kubeconfig"
 
 var (
-	kubeconfig, masterURL string
-	log                   = logf.KBLog.WithName("client").WithName("config")
+	kubeconfig string
+	log        = logf.RuntimeLog.WithName("client").WithName("config")
 )
 
+// init registers the "kubeconfig" flag to the default command line FlagSet.
+// TODO: This should be removed, as it potentially leads to redefined flag errors for users, if they already
+// have registered the "kubeconfig" flag to the command line FlagSet in other parts of their code.
 func init() {
-	// TODO: Fix this to allow double vendoring this library but still register flags on behalf of users
-	flag.StringVar(&kubeconfig, "kubeconfig", "",
-		"Paths to a kubeconfig. Only required if out-of-cluster.")
-
-	flag.StringVar(&masterURL, "master", "",
-		"The address of the Kubernetes API server. Overrides any value in kubeconfig. "+
-			"Only required if out-of-cluster.")
+	RegisterFlags(flag.CommandLine)
 }
 
-// GetConfig creates a *rest.Config for talking to a Kubernetes apiserver.
+// RegisterFlags registers flag variables to the given FlagSet if not already registered.
+// It uses the default command line FlagSet, if none is provided. Currently, it only registers the kubeconfig flag.
+func RegisterFlags(fs *flag.FlagSet) {
+	if fs == nil {
+		fs = flag.CommandLine
+	}
+	if f := fs.Lookup(KubeconfigFlagName); f != nil {
+		kubeconfig = f.Value.String()
+	} else {
+		fs.StringVar(&kubeconfig, KubeconfigFlagName, "", "Paths to a kubeconfig. Only required if out-of-cluster.")
+	}
+}
+
+// GetConfig creates a *rest.Config for talking to a Kubernetes API server.
 // If --kubeconfig is set, will use the kubeconfig file at that location.  Otherwise will assume running
 // in cluster and use the cluster provided kubeconfig.
 //
-// Config precedence
+// The returned `*rest.Config` has client-side rate limiting disabled as we can rely on API priority and
+// fairness. Set its QPS to a value equal or bigger than 0 to re-enable it.
+//
+// Config precedence:
 //
 // * --kubeconfig flag pointing at a file
 //
@@ -55,34 +72,105 @@ func init() {
 //
 // * In-cluster config if running in cluster
 //
-// * $HOME/.kube/config if exists
+// * $HOME/.kube/config if exists.
 func GetConfig() (*rest.Config, error) {
+	return GetConfigWithContext("")
+}
+
+// GetConfigWithContext creates a *rest.Config for talking to a Kubernetes API server with a specific context.
+// If --kubeconfig is set, will use the kubeconfig file at that location.  Otherwise will assume running
+// in cluster and use the cluster provided kubeconfig.
+//
+// The returned `*rest.Config` has client-side rate limiting disabled as we can rely on API priority and
+// fairness. Set its QPS to a value equal or bigger than 0 to re-enable it.
+//
+// Config precedence:
+//
+// * --kubeconfig flag pointing at a file
+//
+// * KUBECONFIG environment variable pointing at a file
+//
+// * In-cluster config if running in cluster
+//
+// * $HOME/.kube/config if exists.
+func GetConfigWithContext(context string) (*rest.Config, error) {
+	cfg, err := loadConfig(context)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.QPS == 0.0 {
+		// Disable client-side ratelimer by default, we can rely on
+		// API priority and fairness
+		cfg.QPS = -1
+	}
+	return cfg, nil
+}
+
+// loadInClusterConfig is a function used to load the in-cluster
+// Kubernetes client config. This variable makes is possible to
+// test the precedence of loading the config.
+var loadInClusterConfig = rest.InClusterConfig
+
+// loadConfig loads a REST Config as per the rules specified in GetConfig.
+func loadConfig(context string) (config *rest.Config, configErr error) {
 	// If a flag is specified with the config location, use that
 	if len(kubeconfig) > 0 {
-		return clientcmd.BuildConfigFromFlags(masterURL, kubeconfig)
-	}
-	// If an env variable is specified with the config locaiton, use that
-	if len(os.Getenv("KUBECONFIG")) > 0 {
-		return clientcmd.BuildConfigFromFlags(masterURL, os.Getenv("KUBECONFIG"))
-	}
-	// If no explicit location, try the in-cluster config
-	if c, err := rest.InClusterConfig(); err == nil {
-		return c, nil
-	}
-	// If no in-cluster config, try the default location in the user's home directory
-	if usr, err := user.Current(); err == nil {
-		if c, err := clientcmd.BuildConfigFromFlags(
-			"", filepath.Join(usr.HomeDir, ".kube", "config")); err == nil {
-			return c, nil
-		}
+		return loadConfigWithContext("", &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}, context)
 	}
 
-	return nil, fmt.Errorf("could not locate a kubeconfig")
+	// If the recommended kubeconfig env variable is not specified,
+	// try the in-cluster config.
+	kubeconfigPath := os.Getenv(clientcmd.RecommendedConfigPathEnvVar)
+	if len(kubeconfigPath) == 0 {
+		c, err := loadInClusterConfig()
+		if err == nil {
+			return c, nil
+		}
+
+		defer func() {
+			if configErr != nil {
+				log.Error(err, "unable to load in-cluster config")
+			}
+		}()
+	}
+
+	// If the recommended kubeconfig env variable is set, or there
+	// is no in-cluster config, try the default recommended locations.
+	//
+	// NOTE: For default config file locations, upstream only checks
+	// $HOME for the user's home directory, but we can also try
+	// os/user.HomeDir when $HOME is unset.
+	//
+	// TODO(jlanford): could this be done upstream?
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if _, ok := os.LookupEnv("HOME"); !ok {
+		u, err := user.Current()
+		if err != nil {
+			return nil, fmt.Errorf("could not get current user: %w", err)
+		}
+		loadingRules.Precedence = append(loadingRules.Precedence, filepath.Join(u.HomeDir, clientcmd.RecommendedHomeDir, clientcmd.RecommendedFileName))
+	}
+
+	return loadConfigWithContext("", loadingRules, context)
+}
+
+func loadConfigWithContext(apiServerURL string, loader clientcmd.ClientConfigLoader, context string) (*rest.Config, error) {
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loader,
+		&clientcmd.ConfigOverrides{
+			ClusterInfo: clientcmdapi.Cluster{
+				Server: apiServerURL,
+			},
+			CurrentContext: context,
+		}).ClientConfig()
 }
 
 // GetConfigOrDie creates a *rest.Config for talking to a Kubernetes apiserver.
 // If --kubeconfig is set, will use the kubeconfig file at that location.  Otherwise will assume running
 // in cluster and use the cluster provided kubeconfig.
+//
+// The returned `*rest.Config` has client-side rate limiting disabled as we can rely on API priority and
+// fairness. Set its QPS to a value equal or bigger than 0 to re-enable it.
 //
 // Will log an error and exit if there is an error creating the rest.Config.
 func GetConfigOrDie() *rest.Config {

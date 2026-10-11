@@ -18,7 +18,7 @@ package v1beta1
 
 import (
 	core "k8s.io/api/core/v1"
-	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -77,8 +77,8 @@ type PlatformTimescaleDB struct {
 }
 
 type PlatformApp struct {
-	Host string                         `json:"host,omitempty" protobuf:"bytes,1,name=host"`
-	TLS  []extensionsv1beta1.IngressTLS `json:"tls,omitempty" protobuf:"bytes,2,name=tls"`
+	Host string                    `json:"host,omitempty" protobuf:"bytes,1,name=host"`
+	TLS  []networkingv1.IngressTLS `json:"tls,omitempty" protobuf:"bytes,2,name=tls"`
 }
 
 type PlatformApiserver struct {
@@ -87,12 +87,12 @@ type PlatformApiserver struct {
 }
 
 type PlatformRestfulApiserver struct {
-	Host string                         `json:"host,omitempty" protobuf:"bytes,1,name=host"`
-	TLS  []extensionsv1beta1.IngressTLS `json:"tls,omitempty" protobuf:"bytes,2,name=tls"`
+	Host string                    `json:"host,omitempty" protobuf:"bytes,1,name=host"`
+	TLS  []networkingv1.IngressTLS `json:"tls,omitempty" protobuf:"bytes,2,name=tls"`
 }
 type PlatformGRPCApiserver struct {
-	Host string                         `json:"host,omitempty" protobuf:"bytes,1,name=host"`
-	TLS  []extensionsv1beta1.IngressTLS `json:"tls,omitempty" protobuf:"bytes,2,name=tls"`
+	Host string                    `json:"host,omitempty" protobuf:"bytes,1,name=host"`
+	TLS  []networkingv1.IngressTLS `json:"tls,omitempty" protobuf:"bytes,2,name=tls"`
 }
 
 type PlatformMQTTBroker struct {

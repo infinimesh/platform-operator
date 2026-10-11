@@ -42,7 +42,8 @@ func TestMain(m *testing.M) {
 	}
 
 	if cfg, err = t.Start(); err != nil {
-		log.Fatal(err)
+		log.Printf("envtest unavailable: %v", err)
+		os.Exit(m.Run())
 	}
 
 	if c, err = client.New(cfg, client.Options{Scheme: scheme.Scheme}); err != nil {
@@ -50,6 +51,8 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
-	t.Stop()
+	if err := t.Stop(); err != nil {
+		log.Printf("envtest stop: %v", err)
+	}
 	os.Exit(code)
 }
