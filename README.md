@@ -17,6 +17,6 @@ kubectl apply -f https://raw.githubusercontent.com/infinimesh/platform-operator/
 kubectl apply -f https://raw.githubusercontent.com/infinimesh/platform-operator/main/manifests/operator.yaml
 ```
 
-Module `github.com/infinimesh/enterprise-operator`.
+Module `github.com/infinimesh/enterprise-operator`. Builds with Go 1.27. The Platform CRD is `apiextensions.k8s.io/v1`.
 
 Apache-2.0.

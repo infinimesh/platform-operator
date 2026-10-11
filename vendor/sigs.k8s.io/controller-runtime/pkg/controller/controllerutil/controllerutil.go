@@ -20,75 +20,252 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
 // AlreadyOwnedError is an error returned if the object you are trying to assign
 // a controller reference is already owned by another controller Object is the
-// subject and Owner is the reference for the current owner
+// subject and Owner is the reference for the current owner.
 type AlreadyOwnedError struct {
-	Object v1.Object
-	Owner  v1.OwnerReference
+	Object metav1.Object
+	Owner  metav1.OwnerReference
 }
 
 func (e *AlreadyOwnedError) Error() string {
 	return fmt.Sprintf("Object %s/%s is already owned by another %s controller %s", e.Object.GetNamespace(), e.Object.GetName(), e.Owner.Kind, e.Owner.Name)
 }
 
-func newAlreadyOwnedError(Object v1.Object, Owner v1.OwnerReference) *AlreadyOwnedError {
+func newAlreadyOwnedError(obj metav1.Object, owner metav1.OwnerReference) *AlreadyOwnedError {
 	return &AlreadyOwnedError{
-		Object: Object,
-		Owner:  Owner,
+		Object: obj,
+		Owner:  owner,
 	}
 }
 
-// SetControllerReference sets owner as a Controller OwnerReference on owned.
-// This is used for garbage collection of the owned object and for
-// reconciling the owner object on changes to owned (with a Watch + EnqueueRequestForOwner).
+// OwnerReferenceOption is a function that can modify a `metav1.OwnerReference`.
+type OwnerReferenceOption func(*metav1.OwnerReference)
+
+// WithBlockOwnerDeletion allows configuring the BlockOwnerDeletion field on the `metav1.OwnerReference`.
+func WithBlockOwnerDeletion(blockOwnerDeletion bool) OwnerReferenceOption {
+	return func(ref *metav1.OwnerReference) {
+		ref.BlockOwnerDeletion = &blockOwnerDeletion
+	}
+}
+
+// SetControllerReference sets owner as a Controller OwnerReference on controlled.
+// This is used for garbage collection of the controlled object and for
+// reconciling the owner object on changes to controlled (with a Watch + EnqueueRequestForOwner).
 // Since only one OwnerReference can be a controller, it returns an error if
 // there is another OwnerReference with Controller flag set.
-func SetControllerReference(owner, object v1.Object, scheme *runtime.Scheme) error {
+func SetControllerReference(owner, controlled metav1.Object, scheme *runtime.Scheme, opts ...OwnerReferenceOption) error {
+	// Validate the owner.
 	ro, ok := owner.(runtime.Object)
 	if !ok {
-		return fmt.Errorf("is not a %T a runtime.Object, cannot call SetControllerReference", owner)
+		return fmt.Errorf("%T is not a runtime.Object, cannot call SetControllerReference", owner)
+	}
+	if err := validateOwner(owner, controlled); err != nil {
+		return err
 	}
 
+	// Create a new controller ref.
+	gvk, err := apiutil.GVKForObject(ro, scheme)
+	if err != nil {
+		return err
+	}
+	ref := metav1.OwnerReference{
+		APIVersion:         gvk.GroupVersion().String(),
+		Kind:               gvk.Kind,
+		Name:               owner.GetName(),
+		UID:                owner.GetUID(),
+		BlockOwnerDeletion: new(true),
+		Controller:         new(true),
+	}
+	for _, opt := range opts {
+		opt(&ref)
+	}
+
+	// Return early with an error if the object is already controlled.
+	if existing := metav1.GetControllerOf(controlled); existing != nil && !referSameObject(*existing, ref) {
+		return newAlreadyOwnedError(controlled, *existing)
+	}
+
+	// Update owner references and return.
+	upsertOwnerRef(ref, controlled)
+	return nil
+}
+
+// SetOwnerReference is a helper method to make sure the given object contains an object reference to the object provided.
+// This allows you to declare that owner has a dependency on the object without specifying it as a controller.
+// If a reference to the same object already exists, it'll be overwritten with the newly provided version.
+func SetOwnerReference(owner, object metav1.Object, scheme *runtime.Scheme, opts ...OwnerReferenceOption) error {
+	// Validate the owner.
+	ro, ok := owner.(runtime.Object)
+	if !ok {
+		return fmt.Errorf("%T is not a runtime.Object, cannot call SetOwnerReference", owner)
+	}
+	if err := validateOwner(owner, object); err != nil {
+		return err
+	}
+
+	// Create a new owner ref.
+	gvk, err := apiutil.GVKForObject(ro, scheme)
+	if err != nil {
+		return err
+	}
+	ref := metav1.OwnerReference{
+		APIVersion: gvk.GroupVersion().String(),
+		Kind:       gvk.Kind,
+		UID:        owner.GetUID(),
+		Name:       owner.GetName(),
+	}
+	for _, opt := range opts {
+		opt(&ref)
+	}
+
+	// Update owner references and return.
+	upsertOwnerRef(ref, object)
+	return nil
+}
+
+// RemoveOwnerReference is a helper method to make sure the given object removes an owner reference to the object provided.
+// This allows you to remove the owner to establish a new owner of the object in a subsequent call.
+func RemoveOwnerReference(owner, object metav1.Object, scheme *runtime.Scheme) error {
+	owners := object.GetOwnerReferences()
+	length := len(owners)
+	if length < 1 {
+		return fmt.Errorf("%T does not have any owner references", object)
+	}
+	ro, ok := owner.(runtime.Object)
+	if !ok {
+		return fmt.Errorf("%T is not a runtime.Object, cannot call RemoveOwnerReference", owner)
+	}
 	gvk, err := apiutil.GVKForObject(ro, scheme)
 	if err != nil {
 		return err
 	}
 
-	// Create a new ref
-	ref := *v1.NewControllerRef(owner, schema.GroupVersionKind{Group: gvk.Group, Version: gvk.Version, Kind: gvk.Kind})
-
-	existingRefs := object.GetOwnerReferences()
-	fi := -1
-	for i, r := range existingRefs {
-		if referSameObject(ref, r) {
-			fi = i
-		} else if r.Controller != nil && *r.Controller {
-			return newAlreadyOwnedError(object, r)
-		}
-	}
-	if fi == -1 {
-		existingRefs = append(existingRefs, ref)
-	} else {
-		existingRefs[fi] = ref
+	index := indexOwnerRef(owners, metav1.OwnerReference{
+		APIVersion: gvk.GroupVersion().String(),
+		Name:       owner.GetName(),
+		Kind:       gvk.Kind,
+	})
+	if index == -1 {
+		return fmt.Errorf("%T does not have an owner reference for %T", object, owner)
 	}
 
-	// Update owner references
-	object.SetOwnerReferences(existingRefs)
+	owners = append(owners[:index], owners[index+1:]...)
+	object.SetOwnerReferences(owners)
 	return nil
 }
 
-// Returns true if a and b point to the same object
-func referSameObject(a, b v1.OwnerReference) bool {
+// HasControllerReference returns true if the object
+// has an owner ref with controller equal to true
+func HasControllerReference(object metav1.Object) bool {
+	owners := object.GetOwnerReferences()
+	for _, owner := range owners {
+		isTrue := owner.Controller
+		if owner.Controller != nil && *isTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// HasOwnerReference returns true if the owners list contains an owner reference
+// that matches the object's group, kind, and name.
+func HasOwnerReference(ownerRefs []metav1.OwnerReference, obj client.Object, scheme *runtime.Scheme) (bool, error) {
+	gvk, err := apiutil.GVKForObject(obj, scheme)
+	if err != nil {
+		return false, err
+	}
+	idx := indexOwnerRef(ownerRefs, metav1.OwnerReference{
+		APIVersion: gvk.GroupVersion().String(),
+		Name:       obj.GetName(),
+		Kind:       gvk.Kind,
+	})
+	return idx != -1, nil
+}
+
+// RemoveControllerReference removes an owner reference where the controller
+// equals true
+func RemoveControllerReference(owner, object metav1.Object, scheme *runtime.Scheme) error {
+	if ok := HasControllerReference(object); !ok {
+		return fmt.Errorf("%T does not have a owner reference with controller equals true", object)
+	}
+	ro, ok := owner.(runtime.Object)
+	if !ok {
+		return fmt.Errorf("%T is not a runtime.Object, cannot call RemoveControllerReference", owner)
+	}
+	gvk, err := apiutil.GVKForObject(ro, scheme)
+	if err != nil {
+		return err
+	}
+	ownerRefs := object.GetOwnerReferences()
+	index := indexOwnerRef(ownerRefs, metav1.OwnerReference{
+		APIVersion: gvk.GroupVersion().String(),
+		Name:       owner.GetName(),
+		Kind:       gvk.Kind,
+	})
+
+	if index == -1 {
+		return fmt.Errorf("%T does not have an controller reference for %T", object, owner)
+	}
+
+	if ownerRefs[index].Controller == nil || !*ownerRefs[index].Controller {
+		return fmt.Errorf("%T owner is not the controller reference for %T", owner, object)
+	}
+
+	ownerRefs = append(ownerRefs[:index], ownerRefs[index+1:]...)
+	object.SetOwnerReferences(ownerRefs)
+	return nil
+}
+
+func upsertOwnerRef(ref metav1.OwnerReference, object metav1.Object) {
+	owners := object.GetOwnerReferences()
+	if idx := indexOwnerRef(owners, ref); idx == -1 {
+		owners = append(owners, ref)
+	} else {
+		owners[idx] = ref
+	}
+	object.SetOwnerReferences(owners)
+}
+
+// indexOwnerRef returns the index of the owner reference in the slice if found, or -1.
+func indexOwnerRef(ownerReferences []metav1.OwnerReference, ref metav1.OwnerReference) int {
+	for index, r := range ownerReferences {
+		if referSameObject(r, ref) {
+			return index
+		}
+	}
+	return -1
+}
+
+func validateOwner(owner, object metav1.Object) error {
+	ownerNs := owner.GetNamespace()
+	if ownerNs != "" {
+		objNs := object.GetNamespace()
+		if objNs == "" {
+			return fmt.Errorf("cluster-scoped resource must not have a namespace-scoped owner, owner's namespace %s", ownerNs)
+		}
+		if ownerNs != objNs {
+			return fmt.Errorf("cross-namespace owner references are disallowed, owner's namespace %s, obj's namespace %s", owner.GetNamespace(), object.GetNamespace())
+		}
+	}
+	return nil
+}
+
+// Returns true if a and b point to the same object.
+func referSameObject(a, b metav1.OwnerReference) bool {
 	aGV, err := schema.ParseGroupVersion(a.APIVersion)
 	if err != nil {
 		return false
@@ -98,81 +275,259 @@ func referSameObject(a, b v1.OwnerReference) bool {
 	if err != nil {
 		return false
 	}
-
-	return aGV == bGV && a.Kind == b.Kind && a.Name == b.Name
+	return aGV.Group == bGV.Group && a.Kind == b.Kind && a.Name == b.Name
 }
 
-// OperationResult is the action result of a CreateOrUpdate call
+// OperationResult is the action result of a CreateOrUpdate or CreateOrPatch call.
 type OperationResult string
 
 const ( // They should complete the sentence "Deployment default/foo has been ..."
-	// OperationResultNone means that the resource has not been changed
+	// OperationResultNone means that the resource has not been changed.
 	OperationResultNone OperationResult = "unchanged"
-	// OperationResultCreated means that a new resource is created
+	// OperationResultCreated means that a new resource is created.
 	OperationResultCreated OperationResult = "created"
-	// OperationResultUpdated means that an existing resource is updated
+	// OperationResultUpdated means that an existing resource is updated.
 	OperationResultUpdated OperationResult = "updated"
+	// OperationResultUpdatedStatus means that an existing resource and its status is updated.
+	OperationResultUpdatedStatus OperationResult = "updatedStatus"
+	// OperationResultUpdatedStatusOnly means that only an existing status is updated.
+	OperationResultUpdatedStatusOnly OperationResult = "updatedStatusOnly"
 )
 
-// CreateOrUpdate creates or updates the given object obj in the Kubernetes
-// cluster. The object's desired state should be reconciled with the existing
-// state using the passed in ReconcileFn. obj must be a struct pointer so that
-// obj can be updated with the content returned by the Server.
+// CreateOrUpdate attempts to fetch the given object from the Kubernetes cluster.
+// If the object didn't exist, MutateFn will be called, and it will be created.
+// If the object did exist, MutateFn will be called, and if it changed the
+// object, it will be updated.
+// Otherwise, it will be left unchanged.
+// The executed operation (and an error) will be returned.
 //
-// It returns the executed operation and an error.
-func CreateOrUpdate(ctx context.Context, c client.Client, obj runtime.Object, f MutateFn) (OperationResult, error) {
-	// op is the operation we are going to attempt
-	op := OperationResultNone
-
-	// get the existing object meta
-	metaObj, ok := obj.(v1.Object)
-	if !ok {
-		return OperationResultNone, fmt.Errorf("%T does not implement metav1.Object interface", obj)
-	}
-
-	// retrieve the existing object
-	key := client.ObjectKey{
-		Name:      metaObj.GetName(),
-		Namespace: metaObj.GetNamespace(),
-	}
-	err := c.Get(ctx, key, obj)
-
-	// reconcile the existing object
-	existing := obj.DeepCopyObject()
-	existingObjMeta := existing.(v1.Object)
-	existingObjMeta.SetName(metaObj.GetName())
-	existingObjMeta.SetNamespace(metaObj.GetNamespace())
-
-	if e := f(obj); e != nil {
-		return OperationResultNone, e
-	}
-
-	if metaObj.GetName() != existingObjMeta.GetName() {
-		return OperationResultNone, fmt.Errorf("ReconcileFn cannot mutate objects name")
-	}
-
-	if metaObj.GetNamespace() != existingObjMeta.GetNamespace() {
-		return OperationResultNone, fmt.Errorf("ReconcileFn cannot mutate objects namespace")
-	}
-
-	if errors.IsNotFound(err) {
-		err = c.Create(ctx, obj)
-		op = OperationResultCreated
-	} else if err == nil {
-		if reflect.DeepEqual(existing, obj) {
-			return OperationResultNone, nil
+// WARNING: If the MutateFn resets a value on obj that has a default value,
+// CreateOrUpdate will *always* perform an update. This is because when the
+// object is fetched from the API server, the value will have taken on the
+// default value, and the check for equality will fail. For example, Deployments
+// must have a Replicas value set. If the MutateFn sets a Deployment's Replicas
+// to nil, then it will never match with the object returned from the API
+// server, which defaults the value to 1.
+//
+// WARNING: CreateOrUpdate assumes that no values have been set on obj aside
+// from the Name/Namespace. Values other than Name and Namespace that existed on
+// obj may be overwritten by the corresponding values in the object returned
+// from the Kubernetes API server. When this happens, the Update will not work
+// as expected.
+//
+// Note: changes made by MutateFn to any sub-resource (status...), will be
+// discarded.
+func CreateOrUpdate(ctx context.Context, c client.Client, obj client.Object, f MutateFn) (OperationResult, error) {
+	key := client.ObjectKeyFromObject(obj)
+	if err := c.Get(ctx, key, obj); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return OperationResultNone, err
 		}
-		err = c.Update(ctx, obj)
-		op = OperationResultUpdated
-	} else {
+		if f != nil {
+			if err := mutate(f, key, obj); err != nil {
+				return OperationResultNone, err
+			}
+		}
+
+		if err := c.Create(ctx, obj); err != nil {
+			return OperationResultNone, err
+		}
+		return OperationResultCreated, nil
+	}
+
+	existing := obj.DeepCopyObject()
+	if f != nil {
+		if err := mutate(f, key, obj); err != nil {
+			return OperationResultNone, err
+		}
+	}
+
+	if equality.Semantic.DeepEqual(existing, obj) {
+		return OperationResultNone, nil
+	}
+
+	if err := c.Update(ctx, obj); err != nil {
+		return OperationResultNone, err
+	}
+	return OperationResultUpdated, nil
+}
+
+// CreateOrPatch attempts to fetch the given object from the Kubernetes cluster.
+// If the object didn't exist, MutateFn will be called, and it will be created.
+// If the object did exist, MutateFn will be called, and if it changed the
+// object, it will be patched.
+// Otherwise, it will be left unchanged.
+// The executed operation (and an error) will be returned.
+//
+// WARNING: If the MutateFn resets a value on obj that has a default value,
+// CreateOrPatch will *always* perform a patch. This is because when the
+// object is fetched from the API server, the value will have taken on the
+// default value, and the check for equality will fail.
+// For example, Deployments must have a Replicas value set. If the MutateFn sets
+// a Deployment's Replicas to nil, then it will never match with the object
+// returned from the API server, which defaults the value to 1.
+//
+// WARNING: CreateOrPatch assumes that no values have been set on obj aside
+// from the Name/Namespace. Values other than Name and Namespace that existed on
+// obj may be overwritten by the corresponding values in the object returned
+// from the Kubernetes API server. When this happens, the Patch will not work
+// as expected.
+//
+// Note: changes to any sub-resource other than status will be ignored.
+// Changes to the status sub-resource will only be applied if the object
+// already exist. To change the status on object creation, the easiest
+// way is to requeue the object in the controller if OperationResult is
+// OperationResultCreated
+func CreateOrPatch(ctx context.Context, c client.Client, obj client.Object, f MutateFn) (OperationResult, error) {
+	key := client.ObjectKeyFromObject(obj)
+	if err := c.Get(ctx, key, obj); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return OperationResultNone, err
+		}
+		if f != nil {
+			if err := mutate(f, key, obj); err != nil {
+				return OperationResultNone, err
+			}
+		}
+		if err := c.Create(ctx, obj); err != nil {
+			return OperationResultNone, err
+		}
+		return OperationResultCreated, nil
+	}
+
+	// Create patches for the object and its possible status.
+	objPatch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
+	statusPatch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
+
+	// Create a copy of the original object as well as converting that copy to
+	// unstructured data.
+	before, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj.DeepCopyObject())
+	if err != nil {
 		return OperationResultNone, err
 	}
 
+	// Attempt to extract the status from the resource for easier comparison later
+	beforeStatus, hasBeforeStatus, err := unstructured.NestedFieldCopy(before, "status")
 	if err != nil {
-		op = OperationResultNone
+		return OperationResultNone, err
 	}
-	return op, err
+
+	// If the resource contains a status then remove it from the unstructured
+	// copy to avoid unnecessary patching later.
+	if hasBeforeStatus {
+		unstructured.RemoveNestedField(before, "status")
+	}
+
+	// Mutate the original object.
+	if f != nil {
+		if err := mutate(f, key, obj); err != nil {
+			return OperationResultNone, err
+		}
+	}
+
+	// Convert the resource to unstructured to compare against our before copy.
+	after, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	if err != nil {
+		return OperationResultNone, err
+	}
+
+	// Attempt to extract the status from the resource for easier comparison later
+	afterStatus, hasAfterStatus, err := unstructured.NestedFieldCopy(after, "status")
+	if err != nil {
+		return OperationResultNone, err
+	}
+
+	// If the resource contains a status then remove it from the unstructured
+	// copy to avoid unnecessary patching later.
+	if hasAfterStatus {
+		unstructured.RemoveNestedField(after, "status")
+	}
+
+	result := OperationResultNone
+
+	if !reflect.DeepEqual(before, after) {
+		// Only issue a Patch if the before and after resources (minus status) differ
+		if err := c.Patch(ctx, obj, objPatch); err != nil {
+			return result, err
+		}
+		result = OperationResultUpdated
+	}
+
+	if (hasBeforeStatus || hasAfterStatus) && !reflect.DeepEqual(beforeStatus, afterStatus) {
+		// Only issue a Status Patch if the resource has a status and the beforeStatus
+		// and afterStatus copies differ
+		if result == OperationResultUpdated {
+			// If Status was replaced by Patch before, set it to afterStatus
+			objectAfterPatch, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+			if err != nil {
+				return result, err
+			}
+			if err = unstructured.SetNestedField(objectAfterPatch, afterStatus, "status"); err != nil {
+				return result, err
+			}
+			// If Status was replaced by Patch before, restore patched structure to the obj
+			if err = runtime.DefaultUnstructuredConverter.FromUnstructured(objectAfterPatch, obj); err != nil {
+				return result, err
+			}
+		}
+		if err := c.Status().Patch(ctx, obj, statusPatch); err != nil {
+			return result, err
+		}
+		if result == OperationResultUpdated {
+			result = OperationResultUpdatedStatus
+		} else {
+			result = OperationResultUpdatedStatusOnly
+		}
+	}
+
+	return result, nil
 }
 
-// MutateFn is a function which mutates the existing object into it's desired state.
-type MutateFn func(existing runtime.Object) error
+// mutate wraps a MutateFn and applies validation to its result.
+func mutate(f MutateFn, key client.ObjectKey, obj client.Object) error {
+	if err := f(); err != nil {
+		return err
+	}
+	if newKey := client.ObjectKeyFromObject(obj); key != newKey {
+		return fmt.Errorf("MutateFn cannot mutate object name and/or object namespace")
+	}
+	return nil
+}
+
+// MutateFn is a function which mutates the existing object into its desired state.
+type MutateFn func() error
+
+// AddFinalizer accepts an Object and adds the provided finalizer if not present.
+// It returns an indication of whether it updated the object's list of finalizers.
+func AddFinalizer(o client.Object, finalizer string) (finalizersUpdated bool) {
+	f := o.GetFinalizers()
+	if slices.Contains(f, finalizer) {
+		return false
+	}
+	o.SetFinalizers(append(f, finalizer))
+	return true
+}
+
+// RemoveFinalizer accepts an Object and removes the provided finalizer if present.
+// It returns an indication of whether it updated the object's list of finalizers.
+func RemoveFinalizer(o client.Object, finalizer string) (finalizersUpdated bool) {
+	f := o.GetFinalizers()
+	length := len(f)
+
+	index := 0
+	for i := range length {
+		if f[i] == finalizer {
+			continue
+		}
+		f[index] = f[i]
+		index++
+	}
+	o.SetFinalizers(f[:index])
+	return length != index
+}
+
+// ContainsFinalizer checks an Object that the provided finalizer is present.
+func ContainsFinalizer(o client.Object, finalizer string) bool {
+	f := o.GetFinalizers()
+	return slices.Contains(f, finalizer)
+}

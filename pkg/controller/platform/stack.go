@@ -175,7 +175,7 @@ func (r *ReconcilePlatform) ensurePVC(instance *infinimeshv1beta1.Platform, name
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: instance.Namespace},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			Resources:   corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: qty}},
+			Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: qty}},
 		},
 	}
 	if err := controllerutil.SetControllerReference(instance, pvc, r.scheme); err != nil {

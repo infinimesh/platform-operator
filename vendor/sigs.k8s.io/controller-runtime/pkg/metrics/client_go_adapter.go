@@ -17,191 +17,222 @@ limitations under the License.
 package metrics
 
 import (
+	"context"
 	"net/url"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	reflectormetrics "k8s.io/client-go/tools/cache"
 	clientmetrics "k8s.io/client-go/tools/metrics"
-	workqueuemetrics "k8s.io/client-go/util/workqueue"
 )
 
 // this file contains setup logic to initialize the myriad of places
 // that client-go registers metrics.  We copy the names and formats
 // from Kubernetes so that we match the core controllers.
 
-var (
-	// client metrics
+const (
+	hostLabel = "host"
+	verbLabel = "verb"
+)
 
-	requestLatency = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "rest_client_request_latency_seconds",
-			Help:    "Request latency in seconds. Broken down by verb and URL.",
-			Buckets: prometheus.ExponentialBuckets(0.001, 2, 10),
-		},
-		[]string{"verb", "url"},
+// defaultRESTClientDurationBuckets matches Kubernetes core controller REST client metrics.
+// They start at 5ms; override via RESTClientMetricsOptions.DurationBuckets if a scrape
+// pipeline still consumes classic buckets and needs sub-5ms resolution.
+var defaultRESTClientDurationBuckets = []float64{0.005, 0.025, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0}
+
+func restClientDurationHistogram(name, help string, labels []string, buckets []float64) *prometheus.HistogramVec {
+	if len(buckets) == 0 {
+		buckets = defaultRESTClientDurationBuckets
+	}
+	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:                            name,
+		Help:                            help,
+		Buckets:                         buckets,
+		NativeHistogramBucketFactor:     1.1,
+		NativeHistogramMaxBucketNumber:  100,
+		NativeHistogramMinResetDuration: 1 * time.Hour,
+	}, labels)
+}
+
+func newRequestLatency(buckets []float64) *prometheus.HistogramVec {
+	return restClientDurationHistogram(
+		"rest_client_request_duration_seconds",
+		"Request latency in seconds. Broken down by verb and host.",
+		[]string{verbLabel, hostLabel},
+		buckets,
 	)
+}
 
+func newResolverLatency(buckets []float64) *prometheus.HistogramVec {
+	return restClientDurationHistogram(
+		"rest_client_dns_resolution_duration_seconds",
+		"DNS resolver latency in seconds. Broken down by host.",
+		[]string{hostLabel},
+		buckets,
+	)
+}
+
+func newRateLimiterLatency(buckets []float64) *prometheus.HistogramVec {
+	return restClientDurationHistogram(
+		"rest_client_rate_limiter_duration_seconds",
+		"Client side rate limiter latency in seconds. Broken down by verb, and host.",
+		[]string{verbLabel, hostLabel},
+		buckets,
+	)
+}
+
+func newRequestSize() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "rest_client_request_size_bytes",
+			Help: "Request size in bytes. Broken down by verb and host.",
+			// 64 bytes to 16MB
+			Buckets:                         []float64{64, 256, 512, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216},
+			NativeHistogramBucketFactor:     1.1,
+			NativeHistogramMaxBucketNumber:  100,
+			NativeHistogramMinResetDuration: 1 * time.Hour,
+		},
+		[]string{verbLabel, hostLabel},
+	)
+}
+
+func newResponseSize() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "rest_client_response_size_bytes",
+			Help: "Response size in bytes. Broken down by verb and host.",
+			// 64 bytes to 16MB
+			Buckets:                         []float64{64, 256, 512, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216},
+			NativeHistogramBucketFactor:     1.1,
+			NativeHistogramMaxBucketNumber:  100,
+			NativeHistogramMinResetDuration: 1 * time.Hour,
+		},
+		[]string{verbLabel, hostLabel},
+	)
+}
+
+func newRequestRetry() *prometheus.CounterVec {
+	return prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "rest_client_request_retries_total",
+			Help: "Number of request retries, partitioned by status code, verb, and host.",
+		},
+		[]string{"code", verbLabel, hostLabel},
+	)
+}
+
+var (
+	// requestResult is registered by default. The other client metrics are
+	// opt-in: adapters start with a nil collector and RegisterRESTClientMetrics*
+	// stores the HistogramVec / CounterVec.
 	requestResult = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rest_client_requests_total",
 			Help: "Number of HTTP requests, partitioned by status code, method, and host.",
 		},
-		[]string{"code", "method", "host"},
+		[]string{"code", "method", hostLabel},
 	)
 
-	// reflector metrics
+	requestLatency     = &latencyAdapter{}
+	resolverLatency    = &resolverLatencyAdapter{}
+	requestSize        = &sizeAdapter{}
+	responseSize       = &sizeAdapter{}
+	rateLimiterLatency = &latencyAdapter{}
+	requestRetry       = &retryAdapter{}
+)
 
-	// TODO(directxman12): update these to be histograms once the metrics overhaul KEP
-	// PRs start landing.
+// RESTClientMetric identifies an opt-in client-go REST client metric.
+// Pass values to RegisterRESTClientMetrics to enable a subset.
+type RESTClientMetric int
 
-	reflectorSubsystem = "reflector"
-
-	listsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "lists_total",
-		Help:      "Total number of API lists done by the reflectors",
-	}, []string{"name"})
-
-	listsDuration = prometheus.NewSummaryVec(prometheus.SummaryOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "list_duration_seconds",
-		Help:      "How long an API list takes to return and decode for the reflectors",
-	}, []string{"name"})
-
-	itemsPerList = prometheus.NewSummaryVec(prometheus.SummaryOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "items_per_list",
-		Help:      "How many items an API list returns to the reflectors",
-	}, []string{"name"})
-
-	watchesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "watches_total",
-		Help:      "Total number of API watches done by the reflectors",
-	}, []string{"name"})
-
-	shortWatchesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "short_watches_total",
-		Help:      "Total number of short API watches done by the reflectors",
-	}, []string{"name"})
-
-	watchDuration = prometheus.NewSummaryVec(prometheus.SummaryOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "watch_duration_seconds",
-		Help:      "How long an API watch takes to return and decode for the reflectors",
-	}, []string{"name"})
-
-	itemsPerWatch = prometheus.NewSummaryVec(prometheus.SummaryOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "items_per_watch",
-		Help:      "How many items an API watch returns to the reflectors",
-	}, []string{"name"})
-
-	lastResourceVersion = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Subsystem: reflectorSubsystem,
-		Name:      "last_resource_version",
-		Help:      "Last resource version seen for the reflectors",
-	}, []string{"name"})
-
-	// workqueue metrics
-
-	workQueueSubsystem = "workqueue"
-
-	depth = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Subsystem:   workQueueSubsystem,
-		Name:        "depth",
-		Help:        "Current depth of workqueue",
-	}, []string{"name"})
-
-	adds = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Subsystem:   workQueueSubsystem,
-		Name:        "adds_total",
-		Help:        "Total number of adds handled by workqueue",
-	}, []string{"name"})
-
-	latency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Subsystem:   workQueueSubsystem,
-		Name:        "queue_latency_seconds",
-		Help:        "How long in seconds an item stays in workqueue before being requested.",
-		Buckets:     prometheus.ExponentialBuckets(10e-9, 10, 10),
-	}, []string{"name"})
-
-	workDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Subsystem:   workQueueSubsystem,
-		Name:        "work_duration_seconds",
-		Help:        "How long in seconds processing an item from workqueue takes.",
-		Buckets:     prometheus.ExponentialBuckets(10e-9, 10, 10),
-	}, []string{"name"})
-
-	retries = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Subsystem:   workQueueSubsystem,
-		Name:        "retries_total",
-		Help:        "Total number of retries handled by workqueue",
-	}, []string{"name"})
-
-	longestRunning = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Subsystem: workQueueSubsystem,
-		Name:      "longest_running_processor_microseconds",
-		Help: "How many microseconds has the longest running " +
-			"processor for workqueue been running.",
-	}, []string{"name"})
-
-	unfinishedWork = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Subsystem: workQueueSubsystem,
-		Name:      "unfinished_work_seconds",
-		Help: "How many seconds of work has done that " +
-			"is in progress and hasn't been observed by work_duration. Large " +
-			"values indicate stuck threads. One can deduce the number of stuck " +
-			"threads by observing the rate at which this increases.",
-	}, []string{"name"})
+const (
+	// MetricRequestLatency enables the rest_client_request_duration_seconds metric.
+	MetricRequestLatency = iota + 1
+	// MetricDNSResolutionLatency enables the rest_client_dns_resolution_duration_seconds metric.
+	MetricDNSResolutionLatency
+	// MetricRequestSize enables the rest_client_request_size_bytes metric.
+	MetricRequestSize
+	// MetricResponseSize enables the rest_client_response_size_bytes metric.
+	MetricResponseSize
+	// MetricRateLimiterLatency enables the rest_client_rate_limiter_duration_seconds metric.
+	MetricRateLimiterLatency
+	// MetricRequestRetry enables the rest_client_request_retries_total metric.
+	MetricRequestRetry
 )
 
 func init() {
 	registerClientMetrics()
-	registerReflectorMetrics()
-	registerWorkqueueMetrics()
 }
 
-// registerClientMetrics sets up the client latency metrics from client-go
+// registerClientMetrics sets up the client latency metrics from client-go.
 func registerClientMetrics() {
 	// register the metrics with our registry
-	Registry.MustRegister(requestLatency)
 	Registry.MustRegister(requestResult)
 
 	// register the metrics with client-go
-	clientmetrics.Register(&latencyAdapter{metric: requestLatency}, &resultAdapter{metric: requestResult})
+	clientmetrics.Register(clientmetrics.RegisterOpts{
+		RequestResult:      &resultAdapter{metric: requestResult},
+		RequestLatency:     requestLatency,
+		ResolverLatency:    resolverLatency,
+		RequestSize:        requestSize,
+		ResponseSize:       responseSize,
+		RateLimiterLatency: rateLimiterLatency,
+		RequestRetry:       requestRetry,
+	})
 }
 
-// registerReflectorMetrics sets up reflector (reconile) loop metrics
-func registerReflectorMetrics() {
-	Registry.MustRegister(listsTotal)
-	Registry.MustRegister(listsDuration)
-	Registry.MustRegister(itemsPerList)
-	Registry.MustRegister(watchesTotal)
-	Registry.MustRegister(shortWatchesTotal)
-	Registry.MustRegister(watchDuration)
-	Registry.MustRegister(itemsPerWatch)
-	Registry.MustRegister(lastResourceVersion)
-
-	reflectormetrics.SetReflectorMetricsProvider(reflectorMetricsProvider{})
+// RESTClientMetricsOptions configures RegisterRESTClientMetricsWithOptions.
+type RESTClientMetricsOptions struct {
+	// DurationBuckets overrides the classic Prometheus histogram buckets used by
+	// rest_client_request_duration_seconds, rest_client_dns_resolution_duration_seconds,
+	// and rest_client_rate_limiter_duration_seconds.
+	//
+	// If nil or empty, the Kubernetes-default buckets are kept (starting at 5ms).
+	// Native histogram settings are not changed.
+	//
+	// DurationBuckets is read when each duration metric is first registered.
+	// Later calls for the same metric are ignored so already-registered collectors
+	// are not replaced.
+	DurationBuckets []float64
 }
 
-// registerWorkQueueMetrics sets up workqueue (other reconcile) metrics
-func registerWorkqueueMetrics() {
-	Registry.MustRegister(depth)
-	Registry.MustRegister(adds)
-	Registry.MustRegister(latency)
-	Registry.MustRegister(workDuration)
-	Registry.MustRegister(retries)
-	Registry.MustRegister(longestRunning)
-	Registry.MustRegister(unfinishedWork)
-
-	workqueuemetrics.SetProvider(workqueueMetricsProvider{})
+// RegisterRESTClientMetrics enables the given client metrics using default buckets
+// that match Kubernetes core controllers.
+func RegisterRESTClientMetrics(metrics ...RESTClientMetric) {
+	RegisterRESTClientMetricsWithOptions(RESTClientMetricsOptions{}, metrics...)
 }
 
-// this section contains adapters, implementations, and other sundry organic, artisinally
+// RegisterRESTClientMetricsWithOptions enables the given client metrics.
+// See RESTClientMetricsOptions for knobs such as custom duration buckets.
+func RegisterRESTClientMetricsWithOptions(opts RESTClientMetricsOptions, metrics ...RESTClientMetric) {
+	for _, m := range metrics {
+		switch m {
+		case MetricRequestLatency:
+			requestLatency.enable(func() *prometheus.HistogramVec {
+				return newRequestLatency(opts.DurationBuckets)
+			})
+		case MetricDNSResolutionLatency:
+			resolverLatency.enable(func() *prometheus.HistogramVec {
+				return newResolverLatency(opts.DurationBuckets)
+			})
+		case MetricRequestSize:
+			requestSize.enable(newRequestSize)
+		case MetricResponseSize:
+			responseSize.enable(newResponseSize)
+		case MetricRateLimiterLatency:
+			rateLimiterLatency.enable(func() *prometheus.HistogramVec {
+				return newRateLimiterLatency(opts.DurationBuckets)
+			})
+		case MetricRequestRetry:
+			requestRetry.enable(newRequestRetry)
+		default:
+			// unknown metric, ignore
+		}
+	}
+}
+
+// this section contains adapters, implementations, and other sundry organic, artisanally
 // hand-crafted syntax trees required to convince client-go that it actually wants to let
 // someone use its metrics.
 
@@ -209,91 +240,94 @@ func registerWorkqueueMetrics() {
 // copied (more-or-less directly) from k8s.io/kubernetes setup code
 // (which isn't anywhere in an easily-importable place).
 
-type latencyAdapter struct {
-	metric *prometheus.HistogramVec
-}
-
-func (l *latencyAdapter) Observe(verb string, u url.URL, latency time.Duration) {
-	l.metric.WithLabelValues(verb, u.String()).Observe(latency.Seconds())
-}
-
 type resultAdapter struct {
 	metric *prometheus.CounterVec
 }
 
-func (r *resultAdapter) Increment(code, method, host string) {
+func (r *resultAdapter) Increment(_ context.Context, code, method, host string) {
 	r.metric.WithLabelValues(code, method, host).Inc()
 }
 
-// Reflector metrics provider (method #2 for client-go metrics),
-// copied (more-or-less directly) from k8s.io/kubernetes setup code
-// (which isn't anywhere in an easily-importable place).
-
-type reflectorMetricsProvider struct{}
-
-func (reflectorMetricsProvider) NewListsMetric(name string) reflectormetrics.CounterMetric {
-	return listsTotal.WithLabelValues(name)
+type latencyAdapter struct {
+	once   sync.Once
+	metric atomic.Pointer[prometheus.HistogramVec]
 }
 
-func (reflectorMetricsProvider) NewListDurationMetric(name string) reflectormetrics.SummaryMetric {
-	return listsDuration.WithLabelValues(name)
+func (l *latencyAdapter) enable(newMetric func() *prometheus.HistogramVec) {
+	l.once.Do(func() {
+		h := newMetric()
+		l.metric.Store(h)
+		Registry.MustRegister(h)
+	})
 }
 
-func (reflectorMetricsProvider) NewItemsInListMetric(name string) reflectormetrics.SummaryMetric {
-	return itemsPerList.WithLabelValues(name)
+func (l *latencyAdapter) Observe(_ context.Context, verb string, u url.URL, duration time.Duration) {
+	h := l.metric.Load()
+	if h == nil {
+		return
+	}
+	h.WithLabelValues(verb, u.Host).Observe(duration.Seconds())
 }
 
-func (reflectorMetricsProvider) NewWatchesMetric(name string) reflectormetrics.CounterMetric {
-	return watchesTotal.WithLabelValues(name)
+type resolverLatencyAdapter struct {
+	once   sync.Once
+	metric atomic.Pointer[prometheus.HistogramVec]
 }
 
-func (reflectorMetricsProvider) NewShortWatchesMetric(name string) reflectormetrics.CounterMetric {
-	return shortWatchesTotal.WithLabelValues(name)
+func (r *resolverLatencyAdapter) enable(newMetric func() *prometheus.HistogramVec) {
+	r.once.Do(func() {
+		h := newMetric()
+		r.metric.Store(h)
+		Registry.MustRegister(h)
+	})
 }
 
-func (reflectorMetricsProvider) NewWatchDurationMetric(name string) reflectormetrics.SummaryMetric {
-	return watchDuration.WithLabelValues(name)
+func (r *resolverLatencyAdapter) Observe(_ context.Context, host string, duration time.Duration) {
+	h := r.metric.Load()
+	if h == nil {
+		return
+	}
+	h.WithLabelValues(host).Observe(duration.Seconds())
 }
 
-func (reflectorMetricsProvider) NewItemsInWatchMetric(name string) reflectormetrics.SummaryMetric {
-	return itemsPerWatch.WithLabelValues(name)
+type sizeAdapter struct {
+	once   sync.Once
+	metric atomic.Pointer[prometheus.HistogramVec]
 }
 
-func (reflectorMetricsProvider) NewLastResourceVersionMetric(name string) reflectormetrics.GaugeMetric {
-	return lastResourceVersion.WithLabelValues(name)
+func (r *sizeAdapter) enable(newMetric func() *prometheus.HistogramVec) {
+	r.once.Do(func() {
+		h := newMetric()
+		r.metric.Store(h)
+		Registry.MustRegister(h)
+	})
 }
 
-// Workqueue metrics (method #3 for client-go metrics),
-// copied (more-or-less directly) from k8s.io/kubernetes setup code
-// (which isn't anywhere in an easily-importable place).
-// TODO(directxman12): stop "cheating" and calling histograms summaries when we pull in the latest deps
-
-type workqueueMetricsProvider struct{}
-
-func (workqueueMetricsProvider) NewDepthMetric(name string) workqueuemetrics.GaugeMetric {
-	return depth.WithLabelValues(name)
+func (r *sizeAdapter) Observe(_ context.Context, verb string, host string, size float64) {
+	h := r.metric.Load()
+	if h == nil {
+		return
+	}
+	h.WithLabelValues(verb, host).Observe(size)
 }
 
-func (workqueueMetricsProvider) NewAddsMetric(name string) workqueuemetrics.CounterMetric {
-	return adds.WithLabelValues(name)
+type retryAdapter struct {
+	once   sync.Once
+	metric atomic.Pointer[prometheus.CounterVec]
 }
 
-func (workqueueMetricsProvider) NewLatencyMetric(name string) workqueuemetrics.SummaryMetric {
-	return latency.WithLabelValues(name)
+func (r *retryAdapter) enable(newMetric func() *prometheus.CounterVec) {
+	r.once.Do(func() {
+		c := newMetric()
+		r.metric.Store(c)
+		Registry.MustRegister(c)
+	})
 }
 
-func (workqueueMetricsProvider) NewWorkDurationMetric(name string) workqueuemetrics.SummaryMetric {
-	return workDuration.WithLabelValues(name)
-}
-
-func (workqueueMetricsProvider) NewRetriesMetric(name string) workqueuemetrics.CounterMetric {
-	return retries.WithLabelValues(name)
-}
-
-func (workqueueMetricsProvider) NewLongestRunningProcessorMicrosecondsMetric(name string) workqueuemetrics.SettableGaugeMetric {
-	return longestRunning.WithLabelValues(name)
-}
-
-func (workqueueMetricsProvider) NewUnfinishedWorkSecondsMetric(name string) workqueuemetrics.SettableGaugeMetric {
-	return unfinishedWork.WithLabelValues(name)
+func (r *retryAdapter) IncrementRetry(_ context.Context, code, verb, host string) {
+	c := r.metric.Load()
+	if c == nil {
+		return
+	}
+	c.WithLabelValues(code, verb, host).Inc()
 }
