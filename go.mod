@@ -7,7 +7,7 @@ require (
 	github.com/appscode/jsonpatch v1.0.1 // indirect
 	github.com/dgraph-io/dgo/v210 v210.0.0-20210421093152-78a2fece3ebd
 	github.com/evanphx/json-patch v4.11.0+incompatible // indirect
-	github.com/go-logr/logr v0.4.0
+	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v0.4.0 // indirect
 	github.com/googleapis/gnostic v0.5.5 // indirect
 	github.com/gregjones/httpcache v0.0.0-20180305231024-9cad4c3443a7 // indirect
