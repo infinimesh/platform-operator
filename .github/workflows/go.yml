@@ -20,13 +20,16 @@ jobs:
           go-version-file: go.mod
 
       - name: gofmt
-        run: test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+        run: make fmt-check
 
       - name: image tags
         run: sh scripts/image-tags_test.sh
 
-      - name: Vet API packages
-        run: go vet -mod=vendor ./pkg/apis/infinimesh
+      - name: go vet
+        run: go vet -mod=vendor ./pkg/... ./cmd/...
 
-      - name: Test API packages
-        run: go test -mod=vendor ./pkg/apis/infinimesh
+      - name: race
+        run: make race
+
+      - name: fuzz
+        run: make test-fuzz
