@@ -1,6 +1,6 @@
 # Infinimesh Kubernetes Operator
 
-Reconciles a Platform into the [core](https://github.com/infinimesh/core) stack: ArangoDB, RabbitMQ, Redis, and the images `ghcr.io/infinimesh/core/<service>:latest`. On reconcile it deletes the old Kafka and Dgraph workloads (`device-registry`, `nodeserver`, `shadow-api`, `dgraph-alpha`, `dgraph-zero`, and the rest).
+Reconciles a Platform into the [core](https://github.com/infinimesh/core) stack: ArangoDB, RabbitMQ, Redis, and the images `ghcr.io/infinimesh/core/<service>:latest`, including `http-fs` on port 8000 with a volume at `/static`. On reconcile it deletes the old Kafka and Dgraph workloads (`device-registry`, `nodeserver`, `shadow-api`, `dgraph-alpha`, `dgraph-zero`, and the rest).
 
 The static install of the same stack is [k8s](https://github.com/infinimesh/k8s).
 

@@ -94,6 +94,13 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 			secretRef("RABBITMQ_CONN"),
 			{Name: "COAP_ADDR", Value: ":5683"},
 		}},
+		{suffix: "http-fs", image: coreImage("http-fs"), ports: []int{8000, 2112}, data: "/static", env: []corev1.EnvVar{
+			{Name: "DB_HOST", Value: prefix + "-arango:8529"},
+			secretRef("DB_CRED"),
+			secretRef("INF_DEFAULT_ROOT_PASS"),
+			secretRef("SIGNING_KEY"),
+			{Name: "HTTP_FS_ROOT", Value: "/static"},
+		}},
 	}
 	for _, item := range work {
 		if item.data != "" {
