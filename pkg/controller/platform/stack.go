@@ -58,6 +58,7 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 			{Name: "PAIRING_HOST", Value: prefix + "-pairing:8000"},
 			{Name: "REGISTRY_HOST", Value: prefix + "-api:8000"},
 			{Name: "NAMESPACES_HOST", Value: prefix + "-api:8000"},
+			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
 			secretRef("SIGNING_KEY"),
 			secretRef("INF_DEFAULT_ROOT_PASS"),
 		}},
@@ -78,7 +79,10 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 			{Name: "PAIRING", Value: prefix + "-pairing:8000"},
 		}},
 		{suffix: "console", image: coreImage("console"), ports: []int{80}},
-		{suffix: "pairing", image: coreImage("pairing"), ports: []int{8000}, env: []corev1.EnvVar{secretRef("SIGNING_KEY")}},
+		{suffix: "pairing", image: coreImage("pairing"), ports: []int{8000}, env: []corev1.EnvVar{
+			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
+			secretRef("SIGNING_KEY"),
+		}},
 	}
 	for _, item := range work {
 		if item.data != "" {
