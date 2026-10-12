@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"reflect"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,8 +17,18 @@ import (
 	infinimeshv1beta1 "github.com/infinimesh/enterprise-operator/pkg/apis/infinimesh/v1beta1"
 )
 
-func coreImage(name string) string {
-	return "ghcr.io/infinimesh/core/" + name + ":latest"
+func coreImage(name, tag string) string {
+	if tag == "" {
+		tag = defaultCoreVersion
+	}
+	return "ghcr.io/infinimesh/core/" + name + ":" + tag
+}
+
+func imagePullPolicy(image string) corev1.PullPolicy {
+	if strings.HasPrefix(image, "ghcr.io/infinimesh/core/") && !strings.HasSuffix(image, ":latest") {
+		return corev1.PullIfNotPresent
+	}
+	return corev1.PullAlways
 }
 
 func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) error {
@@ -51,7 +62,7 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 			{Name: "RABBITMQ_DEFAULT_PASS", ValueFrom: secretRef("RABBITMQ_PASS").ValueFrom},
 		}},
 		{suffix: "redis", image: "redis:latest", ports: []int{6379}, data: "/data"},
-		{suffix: "api", image: coreImage("api"), ports: []int{8000}, env: []corev1.EnvVar{
+		{suffix: "api", image: coreImage("api", instance.Status.Version), ports: []int{8000}, env: []corev1.EnvVar{
 			{Name: "DB_HOST", Value: prefix + "-arango:8529"},
 			secretRef("DB_CRED"),
 			{Name: "SHADOW_HOST", Value: prefix + "-shadow:8000"},
@@ -62,39 +73,39 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 			secretRef("SIGNING_KEY"),
 			secretRef("INF_DEFAULT_ROOT_PASS"),
 		}},
-		{suffix: "shadow", image: coreImage("shadow"), ports: []int{8000}, env: []corev1.EnvVar{
+		{suffix: "shadow", image: coreImage("shadow", instance.Status.Version), ports: []int{8000}, env: []corev1.EnvVar{
 			secretRef("RABBITMQ_CONN"),
 			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
 			{Name: "DEVICES_HOST", Value: prefix + "-api:8000"},
 			secretRef("SIGNING_KEY"),
 		}},
-		{suffix: "mqtt-bridge", image: coreImage("mqtt-bridge"), ports: []int{8883, 2112}, cert: true, env: []corev1.EnvVar{
+		{suffix: "mqtt-bridge", image: coreImage("mqtt-bridge", instance.Status.Version), ports: []int{8883, 2112}, cert: true, env: []corev1.EnvVar{
 			secretRef("RABBITMQ_CONN"),
 			{Name: "DEVICES_HOST", Value: prefix + "-api:8000"},
 			{Name: "SHADOW_HOST", Value: prefix + "-shadow:8000"},
 			secretRef("SIGNING_KEY"),
 		}},
-		{suffix: "gateway", image: coreImage("gateway"), ports: []int{8000}, env: []corev1.EnvVar{
+		{suffix: "gateway", image: coreImage("gateway", instance.Status.Version), ports: []int{8000}, env: []corev1.EnvVar{
 			{Name: "APISERVER_HOST", Value: prefix + "-api:8000"},
 			{Name: "PAIRING", Value: prefix + "-pairing:8000"},
 		}},
-		{suffix: "console", image: coreImage("console"), ports: []int{80}},
-		{suffix: "pairing", image: coreImage("pairing"), ports: []int{8000}, env: []corev1.EnvVar{
+		{suffix: "console", image: coreImage("console", instance.Status.Version), ports: []int{80}},
+		{suffix: "pairing", image: coreImage("pairing", instance.Status.Version), ports: []int{8000}, env: []corev1.EnvVar{
 			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
 			secretRef("SIGNING_KEY"),
 		}},
-		{suffix: "rules", image: coreImage("rules"), ports: []int{2112}, env: []corev1.EnvVar{
+		{suffix: "rules", image: coreImage("rules", instance.Status.Version), ports: []int{2112}, env: []corev1.EnvVar{
 			{Name: "DB_HOST", Value: prefix + "-arango:8529"},
 			secretRef("DB_CRED"),
 			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
 			{Name: "SHADOW_HOST", Value: prefix + "-shadow:8000"},
 			secretRef("INF_DEFAULT_ROOT_PASS"),
 		}},
-		{suffix: "coap", image: coreImage("coap-gateway"), ports: []int{5683, 2112}, env: []corev1.EnvVar{
+		{suffix: "coap", image: coreImage("coap-gateway", instance.Status.Version), ports: []int{5683, 2112}, env: []corev1.EnvVar{
 			secretRef("RABBITMQ_CONN"),
 			{Name: "COAP_ADDR", Value: ":5683"},
 		}},
-		{suffix: "http-fs", image: coreImage("http-fs"), ports: []int{8000, 2112}, data: "/static", env: []corev1.EnvVar{
+		{suffix: "http-fs", image: coreImage("http-fs", instance.Status.Version), ports: []int{8000, 2112}, data: "/static", env: []corev1.EnvVar{
 			{Name: "DB_HOST", Value: prefix + "-arango:8529"},
 			secretRef("DB_CRED"),
 			secretRef("INF_DEFAULT_ROOT_PASS"),
@@ -174,7 +185,7 @@ func (r *ReconcilePlatform) ensureWorkload(instance *infinimeshv1beta1.Platform,
 	container := corev1.Container{
 		Name:            suffix,
 		Image:           image,
-		ImagePullPolicy: corev1.PullAlways,
+		ImagePullPolicy: imagePullPolicy(image),
 		Env:             env,
 		Ports:           cports,
 	}

@@ -15,6 +15,7 @@ package platform
 
 import (
 	"context"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -88,9 +89,28 @@ func (r *ReconcilePlatform) Reconcile(ctx context.Context, request reconcile.Req
 		return reconcile.Result{}, err
 	}
 
+	now := time.Now().UTC()
+	tag, write, after, err := resolveCoreVersion(instance.Spec.Version, instance.Status.Version, instance.Status.CheckedAt, now, func() (string, error) {
+		return fetchNewestCore(ctx)
+	})
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if write {
+		instance.Status.Version = tag
+		if instance.Spec.Version == autoVersion {
+			instance.Status.CheckedAt = now.Format(time.RFC3339)
+		}
+		if err := r.Status().Update(ctx, instance); err != nil {
+			return reconcile.Result{}, err
+		}
+	} else {
+		instance.Status.Version = tag
+	}
+
 	if err := r.reconcileCore(instance); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: after}, nil
 }

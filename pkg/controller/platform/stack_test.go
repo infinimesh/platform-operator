@@ -11,10 +11,17 @@ import (
 )
 
 func TestCoreImage(t *testing.T) {
-	got := coreImage("api")
-	want := "ghcr.io/infinimesh/core/api:latest"
-	if got != want {
+	if got := coreImage("api", "v3.2.0"); got != "ghcr.io/infinimesh/core/api:v3.2.0" {
 		t.Fatalf("core image %s", got)
+	}
+	if got := coreImage("api", ""); got != "ghcr.io/infinimesh/core/api:v3.2.0" {
+		t.Fatalf("default core image %s", got)
+	}
+	if imagePullPolicy(coreImage("api", "v3.2.0")) != "IfNotPresent" {
+		t.Fatal("a pinned core tag must not pull on every restart")
+	}
+	if imagePullPolicy("arangodb/arangodb:latest") != "Always" {
+		t.Fatal("other images stay on Always")
 	}
 }
 
@@ -27,7 +34,7 @@ func TestRulesAndCoapAreInTheStack(t *testing.T) {
 	if !strings.Contains(text, `suffix: "rules"`) || !strings.Contains(text, `suffix: "coap"`) || !strings.Contains(text, `suffix: "http-fs"`) {
 		t.Fatal("rules, coap, or http-fs is missing from the stack")
 	}
-	if !strings.Contains(text, `coreImage("http-fs")`) || !strings.Contains(text, `data: "/static"`) {
+	if !strings.Contains(text, `coreImage("http-fs", instance.Status.Version)`) || !strings.Contains(text, `data: "/static"`) {
 		t.Fatal("http-fs image or volume is missing")
 	}
 	if strings.Contains(text, "ports: []int{1883, 8883, 2112}") {

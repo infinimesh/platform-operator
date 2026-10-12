@@ -5,6 +5,7 @@ metadata:
     controller-tools.k8s.io: "1.0"
   name: my-infinimesh
 spec:
+  version: v3.2.0
   mqtt:
     secretName: "api-infinimesh-io-tls"
   apiserver:
