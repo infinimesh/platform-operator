@@ -5,6 +5,7 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-r[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
   workflow_dispatch:
 
 permissions:
@@ -53,13 +54,34 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Release notes
+        id: notes
+        if: github.ref_type == 'tag'
+        run: |
+          if printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'; then
+            body="This release is for testing, not for production.
+
+\`ghcr.io/infinimesh/platform-operator:${GITHUB_REF_NAME}\`."
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            body="\`ghcr.io/infinimesh/platform-operator:${GITHUB_REF_NAME}\` and \`:latest\`."
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          delim="notes_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "body<<${delim}"
+            printf '%s\n' "$body"
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          body: |
-            `ghcr.io/infinimesh/platform-operator:${{ github.ref_name }}` and `:latest`.
+          body: ${{ steps.notes.outputs.body }}
+          prerelease: ${{ steps.notes.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.notes.outputs.prerelease != 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

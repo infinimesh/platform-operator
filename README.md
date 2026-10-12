@@ -4,7 +4,7 @@ Reconciles a Platform into the [core](https://github.com/infinimesh/core) stack:
 
 The static install of the same stack is [k8s](https://github.com/infinimesh/k8s).
 
-A tag `vX.Y.Z` or `vX.Y.Z-rN` publishes `ghcr.io/infinimesh/platform-operator` under that tag and `:latest`. A revision tag also publishes `:vX.Y.Z`.
+A tag `vX.Y.Z` or `vX.Y.Z-rN` publishes `ghcr.io/infinimesh/platform-operator` under that tag and `:latest`. A revision tag also publishes `:vX.Y.Z`. A tag `vX.Y.Z-rc.N` publishes only that tag and is a GitHub pre-release. RC images older than 30 days are deleted.
 
 ## Checks
 
