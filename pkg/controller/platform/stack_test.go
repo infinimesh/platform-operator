@@ -18,6 +18,20 @@ func TestCoreImage(t *testing.T) {
 	}
 }
 
+func TestRulesAndCoapAreInTheStack(t *testing.T) {
+	body, err := os.ReadFile("stack.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, `suffix: "rules"`) || !strings.Contains(text, `suffix: "coap"`) {
+		t.Fatal("rules or coap is missing from the stack")
+	}
+	if strings.Contains(text, "ports: []int{1883, 8883, 2112}") {
+		t.Fatal("mqtt-bridge still publishes plaintext 1883")
+	}
+}
+
 func TestLegacyDeleteIsGone(t *testing.T) {
 	body, err := os.ReadFile("stack.go")
 	if err != nil {

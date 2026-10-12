@@ -68,7 +68,7 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 			{Name: "DEVICES_HOST", Value: prefix + "-api:8000"},
 			secretRef("SIGNING_KEY"),
 		}},
-		{suffix: "mqtt-bridge", image: coreImage("mqtt-bridge"), ports: []int{1883, 8883, 2112}, cert: true, env: []corev1.EnvVar{
+		{suffix: "mqtt-bridge", image: coreImage("mqtt-bridge"), ports: []int{8883, 2112}, cert: true, env: []corev1.EnvVar{
 			secretRef("RABBITMQ_CONN"),
 			{Name: "DEVICES_HOST", Value: prefix + "-api:8000"},
 			{Name: "SHADOW_HOST", Value: prefix + "-shadow:8000"},
@@ -82,6 +82,17 @@ func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) 
 		{suffix: "pairing", image: coreImage("pairing"), ports: []int{8000}, env: []corev1.EnvVar{
 			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
 			secretRef("SIGNING_KEY"),
+		}},
+		{suffix: "rules", image: coreImage("rules"), ports: []int{2112}, env: []corev1.EnvVar{
+			{Name: "DB_HOST", Value: prefix + "-arango:8529"},
+			secretRef("DB_CRED"),
+			{Name: "REDIS_HOST", Value: prefix + "-redis:6379"},
+			{Name: "SHADOW_HOST", Value: prefix + "-shadow:8000"},
+			secretRef("INF_DEFAULT_ROOT_PASS"),
+		}},
+		{suffix: "coap", image: coreImage("coap-gateway"), ports: []int{5683, 2112}, env: []corev1.EnvVar{
+			secretRef("RABBITMQ_CONN"),
+			{Name: "COAP_ADDR", Value: ":5683"},
 		}},
 	}
 	for _, item := range work {
@@ -146,8 +157,12 @@ func (r *ReconcilePlatform) ensureWorkload(instance *infinimeshv1beta1.Platform,
 	var cports []corev1.ContainerPort
 	var sports []corev1.ServicePort
 	for _, p := range ports {
-		cports = append(cports, corev1.ContainerPort{ContainerPort: int32(p)})
-		sports = append(sports, corev1.ServicePort{Port: int32(p), TargetPort: intstr.FromInt(p)})
+		proto := corev1.ProtocolTCP
+		if suffix == "coap" && p == 5683 {
+			proto = corev1.ProtocolUDP
+		}
+		cports = append(cports, corev1.ContainerPort{ContainerPort: int32(p), Protocol: proto})
+		sports = append(sports, corev1.ServicePort{Port: int32(p), Protocol: proto, TargetPort: intstr.FromInt(p)})
 	}
 	container := corev1.Container{
 		Name:            suffix,
