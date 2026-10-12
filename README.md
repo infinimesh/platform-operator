@@ -6,6 +6,10 @@ The static install of the same stack is [k8s](https://github.com/infinimesh/k8s)
 
 A tag `vX.Y.Z` or `vX.Y.Z-rN` publishes `ghcr.io/infinimesh/platform-operator` under that tag and `:latest`. A revision tag also publishes `:vX.Y.Z`.
 
+## Checks
+
+`make commit-check` runs `fmt`, `race`, `test-fuzz`, and `code-ql-gate`. `fmt` writes Go files that `gofmt` would change, skipping `vendor`. `race` is `go test -race` for `./pkg/...` and `./cmd/...` with `-mod=vendor`. `code-ql` runs the CodeQL CLI and writes SARIF under `.tmp/codeql/`. The gate fails when a result is level `error`, ignoring paths under `vendor`. `jq` is required. GitHub Actions runs the same race and fuzz steps, and CodeQL on pull requests.
+
 ## Installation
 ```
 kubectl apply -f manifests
