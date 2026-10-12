@@ -18,16 +18,15 @@ func TestCoreImage(t *testing.T) {
 	}
 }
 
-func TestLegacyNamesAreRemoved(t *testing.T) {
-	want := map[string]bool{"repo": false, "web": false, "handsfree": false}
-	for _, suffix := range legacySuffixes {
-		if _, ok := want[suffix]; ok {
-			want[suffix] = true
-		}
+func TestLegacyDeleteIsGone(t *testing.T) {
+	body, err := os.ReadFile("stack.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, ok := range want {
-		if !ok {
-			t.Fatalf("legacy suffix %s is not deleted", name)
+	text := string(body)
+	for _, name := range []string{"deleteLegacy", "device-registry", "dgraph-zero", "dgraph-alpha"} {
+		if strings.Contains(text, name) {
+			t.Fatalf("stack.go still mentions %s", name)
 		}
 	}
 }
