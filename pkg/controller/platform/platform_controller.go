@@ -88,9 +88,6 @@ func (r *ReconcilePlatform) Reconcile(ctx context.Context, request reconcile.Req
 		return reconcile.Result{}, err
 	}
 
-	if err := r.deleteLegacy(instance); err != nil {
-		return reconcile.Result{}, err
-	}
 	if err := r.reconcileCore(instance); err != nil {
 		return reconcile.Result{}, err
 	}

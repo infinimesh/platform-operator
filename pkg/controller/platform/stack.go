@@ -20,58 +20,6 @@ func coreImage(name string) string {
 	return "ghcr.io/infinimesh/core/" + name + ":latest"
 }
 
-var legacySuffixes = []string{
-	"device-registry",
-	"apiserver",
-	"apiserver-rest",
-	"nodeserver",
-	"telemetry-router",
-	"shadow-delta-merger",
-	"shadow-persister",
-	"shadow-api",
-	"twin-redis",
-	"frontend",
-	"timescale-connector",
-	"grafana",
-	"dgraph-zero",
-	"dgraph-alpha",
-	"repo",
-	"web",
-	"handsfree",
-}
-
-func (r *ReconcilePlatform) deleteLegacy(instance *infinimeshv1beta1.Platform) error {
-	for _, suffix := range legacySuffixes {
-		name := instance.Name + "-" + suffix
-		key := types.NamespacedName{Name: name, Namespace: instance.Namespace}
-		deploy := &appsv1.Deployment{}
-		if err := r.Get(context.TODO(), key, deploy); err == nil {
-			if err := r.Delete(context.TODO(), deploy); err != nil && !errors.IsNotFound(err) {
-				return err
-			}
-		} else if !errors.IsNotFound(err) {
-			return err
-		}
-		sts := &appsv1.StatefulSet{}
-		if err := r.Get(context.TODO(), key, sts); err == nil {
-			if err := r.Delete(context.TODO(), sts); err != nil && !errors.IsNotFound(err) {
-				return err
-			}
-		} else if !errors.IsNotFound(err) {
-			return err
-		}
-		svc := &corev1.Service{}
-		if err := r.Get(context.TODO(), key, svc); err == nil {
-			if err := r.Delete(context.TODO(), svc); err != nil && !errors.IsNotFound(err) {
-				return err
-			}
-		} else if !errors.IsNotFound(err) {
-			return err
-		}
-	}
-	return nil
-}
-
 func (r *ReconcilePlatform) reconcileCore(instance *infinimeshv1beta1.Platform) error {
 	if err := r.ensureAuth(instance); err != nil {
 		return err
