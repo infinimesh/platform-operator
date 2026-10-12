@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: infinimesh-controller-manager
+  namespace: infinimesh-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        image: ghcr.io/infinimesh/platform-operator:v3.2.0
