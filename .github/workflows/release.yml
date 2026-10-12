@@ -59,9 +59,9 @@ jobs:
         if: github.ref_type == 'tag'
         run: |
           if printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'; then
-            body="This release is for testing, not for production.
-
-\`ghcr.io/infinimesh/platform-operator:${GITHUB_REF_NAME}\`."
+            body=$(printf '%s\n\n%s\n' \
+              "This release is for testing, not for production." \
+              "\`ghcr.io/infinimesh/platform-operator:${GITHUB_REF_NAME}\`.")
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             body="\`ghcr.io/infinimesh/platform-operator:${GITHUB_REF_NAME}\` and \`:latest\`."

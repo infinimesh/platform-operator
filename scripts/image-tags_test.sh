@@ -18,3 +18,8 @@ ids=$(printf '%s\n' '[
   {"id":3,"created_at":"2020-01-01T00:00:00Z","metadata":{"container":{"tags":["latest"]}}}
 ]' | sh "$(dirname "$tags")/prune-rc-images.sh" --select 2026-09-12T00:00:00Z)
 [ "$ids" = "1" ]
+wf=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)/.github/workflows/release.yml
+if grep -n '^[^ ]' "$wf" | grep -q 'ghcr.io/infinimesh/platform-operator'; then
+  echo "release.yml image line is outside the run block" >&2
+  exit 1
+fi
