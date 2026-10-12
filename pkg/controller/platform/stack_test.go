@@ -24,8 +24,11 @@ func TestRulesAndCoapAreInTheStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(body)
-	if !strings.Contains(text, `suffix: "rules"`) || !strings.Contains(text, `suffix: "coap"`) {
-		t.Fatal("rules or coap is missing from the stack")
+	if !strings.Contains(text, `suffix: "rules"`) || !strings.Contains(text, `suffix: "coap"`) || !strings.Contains(text, `suffix: "http-fs"`) {
+		t.Fatal("rules, coap, or http-fs is missing from the stack")
+	}
+	if !strings.Contains(text, `coreImage("http-fs")`) || !strings.Contains(text, `data: "/static"`) {
+		t.Fatal("http-fs image or volume is missing")
 	}
 	if strings.Contains(text, "ports: []int{1883, 8883, 2112}") {
 		t.Fatal("mqtt-bridge still publishes plaintext 1883")
