@@ -18,8 +18,22 @@ ids=$(printf '%s\n' '[
   {"id":3,"created_at":"2020-01-01T00:00:00Z","metadata":{"container":{"tags":["latest"]}}}
 ]' | sh "$(dirname "$tags")/prune-rc-images.sh" --select 2026-09-12T00:00:00Z)
 [ "$ids" = "1" ]
-wf=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)/.github/workflows/release.yml
-if grep -n '^[^ ]' "$wf" | grep -q 'ghcr.io/infinimesh/platform-operator'; then
-  echo "release.yml image line is outside the run block" >&2
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+ruby -ryaml -e 'ARGV.each {|p| YAML.load_file(p)}' "$root"/.github/workflows/*.yml
+bad=$(mktemp)
+trap 'rm -f "$bad"' EXIT
+cat > "$bad" <<'EOF'
+name: bad
+on: push
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo ok
+`not-yaml`.
+EOF
+if ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$bad" >/dev/null 2>&1; then
+  echo "a workflow with an unindented line in a run block was accepted" >&2
   exit 1
 fi

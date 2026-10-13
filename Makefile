@@ -67,7 +67,10 @@ generate-manifests:
 	kustomize build config -o manifests/operator.yaml
 	cp config/crds/infinimesh_v1beta1_platform.yaml ./manifests/crd.yaml
 
-.PHONY: fmt-check race test-fuzz code-ql code-ql-summary code-ql-gate commit-check
+.PHONY: fmt-check workflow-check race test-fuzz code-ql code-ql-summary code-ql-gate commit-check
+
+workflow-check: ## Parse every GitHub Actions workflow
+	sh scripts/image-tags_test.sh
 
 fmt-check: ## Fail if any Go file is not gofmt-clean
 	@unformatted=$$(find . -name '*.go' -not -path './vendor/*' -not -path '*/node_modules/*' -not -path './.tmp/*' -print | xargs gofmt -l); \
@@ -100,5 +103,5 @@ code-ql-gate: code-ql ## Fail if CodeQL reports any error findings
 	fi; \
 	echo "CodeQL gate passed: no error findings found."
 
-commit-check: fmt race test-fuzz code-ql-gate ## Format, race, fuzz, and CodeQL
+commit-check: fmt workflow-check race test-fuzz code-ql-gate ## Format, workflows, race, fuzz, and CodeQL
 	@echo "commit-check passed."
