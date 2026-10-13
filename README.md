@@ -8,7 +8,7 @@ A tag `vX.Y.Z` or `vX.Y.Z-rN` publishes `ghcr.io/infinimesh/platform-operator` u
 
 ## Core version
 
-`spec.version` is the tag for every core service. An empty value is `v3.4.0-rc.10`. `auto` checks the core GitHub releases once a day and uses the highest `vX.Y.Z` or `vX.Y.Z-rN`. It ignores `vX.Y.Z-rc.N`. `status.version` is the tag the stack is reconciled to.
+`spec.version` is the tag for every core service. An empty value is `v3.4.0`. `auto` checks the core GitHub releases once a day and uses the highest `vX.Y.Z` or `vX.Y.Z-rN`. It ignores `vX.Y.Z-rc.N`. `status.version` is the tag the stack is reconciled to.
 
 ```yaml
 apiVersion: infinimesh.infinimesh.io/v1beta1
@@ -16,7 +16,7 @@ kind: Platform
 metadata:
   name: my-infinimesh
 spec:
-  version: v3.4.0-rc.10
+  version: v3.4.0
 ```
 
 Move a sticky stack to another tag:
@@ -35,10 +35,10 @@ The controller runs as the StatefulSet `infinimesh-controller-manager` in `infin
 kubectl patch statefulset infinimesh-controller-manager -n infinimesh-system --patch-file manifests/operator-image.yaml
 ```
 
-`manifests/operator-image.yaml` pins `ghcr.io/infinimesh/platform-operator:v3.2.0`. The same change with kubectl:
+`manifests/operator-image.yaml` pins `ghcr.io/infinimesh/platform-operator:v3.4.0`. The same change with kubectl:
 
 ```bash
-kubectl set image statefulset/infinimesh-controller-manager -n infinimesh-system manager=ghcr.io/infinimesh/platform-operator:v3.2.0
+kubectl set image statefulset/infinimesh-controller-manager -n infinimesh-system manager=ghcr.io/infinimesh/platform-operator:v3.4.0
 ```
 
 ## Checks
