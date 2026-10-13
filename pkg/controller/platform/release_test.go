@@ -25,7 +25,7 @@ func TestResolveSticky(t *testing.T) {
 		t.Fatal("lookup")
 		return "", nil
 	})
-	if err != nil || tag != "v3.2.0" || !write || after != 0 {
+	if err != nil || tag != defaultCoreVersion || !write || after != 0 {
 		t.Fatalf("empty: %s write=%v after=%s err=%v", tag, write, after, err)
 	}
 	tag, write, after, err = resolveCoreVersion("v3.4.0-rc.2", "v3.4.0-rc.2", "", now, nil)

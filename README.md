@@ -8,7 +8,7 @@ A tag `vX.Y.Z` or `vX.Y.Z-rN` publishes `ghcr.io/infinimesh/platform-operator` u
 
 ## Core version
 
-`spec.version` is the tag for every core service. An empty value is `v3.2.0`. `auto` checks the core GitHub releases once a day and uses the highest `vX.Y.Z` or `vX.Y.Z-rN`. It ignores `vX.Y.Z-rc.N`. `status.version` is the tag the stack is reconciled to.
+`spec.version` is the tag for every core service. An empty value is `v3.4.0-rc.10`. `auto` checks the core GitHub releases once a day and uses the highest `vX.Y.Z` or `vX.Y.Z-rN`. It ignores `vX.Y.Z-rc.N`. `status.version` is the tag the stack is reconciled to.
 
 ```yaml
 apiVersion: infinimesh.infinimesh.io/v1beta1
@@ -16,7 +16,7 @@ kind: Platform
 metadata:
   name: my-infinimesh
 spec:
-  version: v3.2.0
+  version: v3.4.0-rc.10
 ```
 
 Move a sticky stack to another tag:

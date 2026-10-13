@@ -1,0 +1,81 @@
+name: Lockstep with core
+
+# core's release orchestrator sends core-release {version, prerelease}.
+# Final: PR moving the default core version and the operator image pin, auto-merge, then tag.
+# rc: tag main only. The tag starts release.yml (operator image + GitHub release).
+on:
+  repository_dispatch:
+    types: [core-release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lockstep
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      V: ${{ github.event.client_payload.version }}
+      PRE: ${{ github.event.client_payload.prerelease }}
+      HAS_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Check inputs
+        id: ok
+        run: |
+          if [ "$HAS_APP" != "true" ]; then
+            echo "::warning::RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY are not set, skipping. See infinimesh/core RELEASING.md."
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          printf '%s\n' "$V" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' || { echo "::error::bad version $V"; exit 1; }
+          echo "run=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@v2
+        if: steps.ok.outputs.run == 'true'
+        id: app
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: infinimesh
+          repositories: platform-operator
+      - uses: actions/checkout@v7
+        if: steps.ok.outputs.run == 'true'
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app.outputs.token }}
+      - name: Bump PR (final only)
+        if: steps.ok.outputs.run == 'true' && env.PRE != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          sed -i -E "s/defaultCoreVersion = \"v[^\"]+\"/defaultCoreVersion = \"$V\"/" pkg/controller/platform/release.go
+          sed -i -E "s/^  version: v[^ ]+/  version: $V/" config/samples/infinimesh_v1beta1_platform.yaml README.md
+          sed -i -E "s/An empty value is \`v[^\`]+\`/An empty value is \`$V\`/" README.md
+          sed -i -E "s/example v[^,]+, or auto/example $V, or auto/; s/An empty value is v[^ ]+\./An empty value is $V./" pkg/apis/infinimesh/v1beta1/platform_types.go
+          sed -i -E "s#platform-operator:v[0-9][^ \`]*#platform-operator:$V#g" manifests/operator-image.yaml README.md
+          if git diff --quiet; then echo "already at $V"; exit 0; fi
+          b="release/core-$V"
+          git config user.name "infinimesh-release[bot]"
+          git config user.email "infinimesh-release[bot]@users.noreply.github.com"
+          git switch -c "$b"
+          git commit -am "Default to core $V"
+          git push -f origin "$b"
+          gh pr create --base main --head "$b" --title "Default to core $V" --body "Release $V in lockstep with core." || true
+          gh pr merge "$b" --squash --auto --delete-branch
+          for _ in $(seq 1 80); do
+            s=$(gh pr view "$b" --json state -q .state)
+            [ "$s" = MERGED ] && break
+            [ "$s" = CLOSED ] && { echo "::error::bump PR closed"; exit 1; }
+            sleep 30
+          done
+          [ "$s" = MERGED ] || { echo "::error::bump PR not merged after 40 minutes"; exit 1; }
+          git switch main && git pull -q origin main
+      - name: Tag
+        if: steps.ok.outputs.run == 'true'
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$V" >/dev/null; then echo "$V already tagged"; exit 0; fi
+          git tag "$V"
+          git push origin "$V"
