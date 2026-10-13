@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultCoreVersion = "v3.2.0"
+	defaultCoreVersion = "v3.4.0-rc.10"
 	autoVersion        = "auto"
 	releaseCheckEvery  = 24 * time.Hour
 	releaseRetry       = time.Hour

@@ -14,7 +14,7 @@ func TestCoreImage(t *testing.T) {
 	if got := coreImage("api", "v3.2.0"); got != "ghcr.io/infinimesh/core/api:v3.2.0" {
 		t.Fatalf("core image %s", got)
 	}
-	if got := coreImage("api", ""); got != "ghcr.io/infinimesh/core/api:v3.2.0" {
+	if got := coreImage("api", ""); got != "ghcr.io/infinimesh/core/api:"+defaultCoreVersion {
 		t.Fatalf("default core image %s", got)
 	}
 	if imagePullPolicy(coreImage("api", "v3.2.0")) != "IfNotPresent" {
