@@ -8,4 +8,4 @@ spec:
     spec:
       containers:
       - name: manager
-        image: ghcr.io/infinimesh/platform-operator:v3.4.0
+        image: ghcr.io/infinimesh/platform-operator:v3.4.1
