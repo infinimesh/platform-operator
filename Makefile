@@ -71,6 +71,7 @@ generate-manifests:
 
 workflow-check: ## Parse every GitHub Actions workflow
 	sh scripts/image-tags_test.sh
+	sh scripts/merge-bump_test.sh
 
 fmt-check: ## Fail if any Go file is not gofmt-clean
 	@unformatted=$$(find . -name '*.go' -not -path './vendor/*' -not -path '*/node_modules/*' -not -path './.tmp/*' -print | xargs gofmt -l); \

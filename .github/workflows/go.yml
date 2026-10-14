@@ -24,6 +24,8 @@ jobs:
 
       - name: image tags
         run: sh scripts/image-tags_test.sh
+      - name: merge bump
+        run: sh scripts/merge-bump_test.sh
 
       - name: go vet
         run: go vet -mod=vendor ./pkg/... ./cmd/...
