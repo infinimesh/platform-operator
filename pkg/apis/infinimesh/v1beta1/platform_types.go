@@ -27,8 +27,8 @@ import (
 
 // PlatformSpec defines the desired state of Platform
 type PlatformSpec struct {
-	// Version is the core image tag, for example v3.4.0, or auto.
-	// auto follows the newest official core release once a day. An empty value is v3.4.0.
+	// Version is the core image tag, for example v3.4.1, or auto.
+	// auto follows the newest official core release once a day. An empty value is v3.4.1.
 	Version                  string                           `json:"version,omitempty"`
 	MQTT                     PlatformMQTTBroker               `json:"mqtt,omitempty" protobuf:"bytes,1,name=mqtt"`
 	DGraph                   PlatformDgraph                   `json:"dgraph,omitempty" protobuf:"bytes,2,name=dgraph"`
