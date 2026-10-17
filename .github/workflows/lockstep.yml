@@ -64,7 +64,7 @@ jobs:
           git commit -am "Default to core $V"
           git push -f origin "$b"
           gh pr create --base main --head "$b" --title "Default to core $V" --body "Release $V in lockstep with core." || true
-          gh pr merge "$b" --squash --auto --delete-branch
+          sh scripts/merge-bump.sh "$b"
           for _ in $(seq 1 80); do
             s=$(gh pr view "$b" --json state -q .state)
             [ "$s" = MERGED ] && break
