@@ -2,6 +2,8 @@ module github.com/infinimesh/enterprise-operator
 
 go 1.27.2
 
+toolchain go1.27.3
+
 require (
 	github.com/onsi/gomega v1.44.0
 	google.golang.org/grpc v1.84.0
